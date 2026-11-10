@@ -141,15 +141,38 @@ def status():
             "projects": projmod.recent(8), "asset_ver": av}
 
 
+def _check_scan_folder(folder: str) -> None:
+    """导入前把路径问题说清楚，别让后台任务抛一句英文 OSError 就没了下文。"""
+    if not folder:
+        raise ValueError("请先填剧集文件夹路径，或点「选择…」挑一个文件夹")
+    p = Path(folder)
+    try:
+        exists, is_dir = p.exists(), p.is_dir()
+    except OSError as e:
+        raise ValueError(f"路径无法访问：{folder}（{e}）。盘符是否插好、网络盘是否连上？") from None
+    if not exists:
+        raise ValueError(f"文件夹不存在：{folder}。移动硬盘 / 网络盘没连上，或路径已经改过？")
+    if not is_dir:
+        raise ValueError(f"这不是文件夹：{folder}，请选择装剧集的文件夹，不要直接选视频文件")
+    try:
+        next(p.iterdir(), None)
+    except PermissionError as e:
+        raise ValueError(f"没有权限读取这个文件夹：{folder}。换一个目录，或以管理员身份运行（{e}）") from None
+    except OSError as e:
+        raise ValueError(f"读取文件夹失败：{folder}（{e}）") from None
+
+
 @app.post("/api/scan")
 def scan(body: dict = Body(...)):
-    folder = (body.get("folder") or "").strip()
+    # 从资源管理器粘过来的路径常带引号 / 全角空格，先统一规范化
+    folder = (body.get("folder") or "").strip().strip('"').strip("'").replace("\u3000", " ").strip()
     name = (body.get("name") or "").strip()
     use_ocr = bool(body.get("ocr", True))
     name, notice = _resolve_proj_name(name, folder)
     _job_start("scan")
 
     def work():
+        _check_scan_folder(folder)
         _job_emit(2, "扫描剧集与字幕")
         p = projmod.scan(folder, name)
         # 钩子池的随机种子：换台电脑 / 重新导入同一部剧，高光开头不会一模一样
@@ -1046,49 +1069,122 @@ def pick_folder():
 
 @app.get("/api/folder/list")
 def folder_list(path: str = ""):
-    """内置目录浏览器：path 为空时列出所有盘符，否则列出该目录下的子文件夹。"""
-    if not path.strip():
-        if os.name != "nt":
-            return _list_dir(str(Path.home()))
-        import string
-        drives = []
-        for ch in string.ascii_uppercase:
-            d = f"{ch}:\\"
-            try:
-                if Path(d).exists():
-                    drives.append({"name": f"{ch} 盘", "path": d})
-            except OSError:
-                continue
-        return {"path": "", "parent": None, "dirs": drives}
-    p = Path(path.strip().strip('"'))
-    if not p.exists():
-        raise HTTPException(404, "路径不存在")
-    if not p.is_dir():
-        raise HTTPException(400, "这不是文件夹")
+    """内置目录浏览器：path 为空列盘符，否则列出该目录下的子文件夹 + 视频/字幕文件。
+
+    返回字段 dirs / videos / subs 保持向后兼容，额外提供 files / empty / notice。
+    """
+    clean = (path or "").strip().strip('"').strip("'").replace("\u3000", " ").strip()
+    if not clean:
+        return _list_drives()
+    if os.name == "nt":
+        # 盘符后面那个冒号是合法的，其余 Windows 禁止的字符要单独说清楚，
+        # 否则会被误报成「路径不存在」，让人白查一遍移动硬盘
+        tail = clean[2:] if len(clean) > 2 and clean[1] == ":" else clean
+        bad = [c for c in '<>"|?*' if c in tail]
+        if bad:
+            raise HTTPException(
+                400, f"路径里有 Windows 不允许的字符（{' '.join(bad)}）：{clean}。请重新粘贴完整路径"
+            )
+    try:
+        p = Path(clean)
+        exists = p.exists()
+    except (OSError, ValueError) as e:
+        raise HTTPException(
+            400, f"路径格式不正确或无法访问：{clean}（{e}）。检查盘符是否插好、网络盘是否已连接"
+        ) from None
+    if not exists:
+        raise HTTPException(
+            404, f"路径不存在或当前访问不到：{clean}。移动硬盘 / 网络盘是不是没连上，或文件夹改名了？"
+                 f"点下方「回到此电脑」重新选盘符，也可以直接在上方粘贴完整路径"
+        )
+    try:
+        is_dir = p.is_dir()
+    except OSError as e:
+        raise HTTPException(403, f"无法判断这是不是文件夹：{clean}（{e}）") from None
+    if not is_dir:
+        raise HTTPException(400, f"这不是文件夹：{clean}。请选择装剧集的「文件夹」，不要直接选视频文件")
     return _list_dir(str(p))
 
 
+def _list_drives() -> dict:
+    """列出本机盘符；某个盘读不了只跳过它，不让整页失败。"""
+    if os.name != "nt":
+        return _list_dir(str(Path.home()))
+    import string
+    drives: list[dict] = []
+    failed: list[str] = []
+    for ch in string.ascii_uppercase:
+        d = f"{ch}:\\"
+        try:
+            if Path(d).exists():
+                drives.append({"name": f"{ch} 盘", "path": d})
+        except (OSError, ValueError):
+            failed.append(ch)
+    notice = ""
+    if not drives:
+        notice = "没检测到可用盘符，可以直接在上方输入框粘贴完整路径后回车"
+    elif failed:
+        notice = "部分盘符暂时读不到，已跳过：" + "、".join(failed)
+    return {"path": "", "parent": None, "dirs": drives,
+            "files": [], "videos": 0, "subs": 0,
+            "empty": not drives, "notice": notice}
+
+
 def _list_dir(path_str: str) -> dict:
+    """读一个目录：子文件夹 + 视频/字幕文件。
+
+    只遍历一次 iterdir；单个坏链接 / 无权限条目只跳过自己，不再让整页 500。
+    这里不复用 subs.list_videos()：那个函数是给导入流程用的，未做异常保护，
+    在目录浏览器里直接调会因为一个读不了的条目把整个接口带崩。
+    """
     p = Path(path_str)
     dirs: list[dict] = []
-    vids = subs.list_videos(p) if p.is_dir() else []
-    subs_n = len(subs.list_subs(p)) if p.is_dir() else 0
+    files: list[dict] = []
+    skipped = 0
     try:
-        entries = sorted(p.iterdir(), key=lambda x: x.name.lower())
-    except (PermissionError, OSError) as e:
-        raise HTTPException(403, f"无法读取该目录：{e}") from None
-    for c in entries:
+        entries = list(p.iterdir())
+    except PermissionError as e:
+        raise HTTPException(
+            403, f"没有权限读取这个文件夹：{p}。换一个目录，或右键「以管理员身份运行」启动工具（{e}）"
+        ) from None
+    except OSError as e:
+        raise HTTPException(
+            403, f"读取目录失败：{p}（{e}）。磁盘是不是拔了、网络盘掉线了，或路径太长？"
+        ) from None
+
+    for c in sorted(entries, key=lambda x: x.name.lower()):
         name = c.name
         if name.startswith((".", "$")) or name in ("System Volume Information",):
             continue
         try:
-            if c.is_dir():
-                dirs.append({"name": name, "path": str(c)})
+            is_dir = c.is_dir()
+            is_file = c.is_file() if not is_dir else False
         except OSError:
+            skipped += 1
             continue
+        if is_dir:
+            dirs.append({"name": name, "path": str(c)})
+        elif is_file:
+            ext = c.suffix.lower()
+            if ext in subs.VIDEO_EXT:
+                kind = "video"
+            elif ext in subs.SUB_EXT:
+                kind = "sub"
+            else:
+                continue
+            try:
+                size = c.stat().st_size
+            except OSError:
+                size = 0
+            files.append({"name": name, "path": str(c), "kind": kind, "size": size})
+
+    videos = sum(1 for f in files if f["kind"] == "video")
+    subs_n = sum(1 for f in files if f["kind"] == "sub")
+    notice = f"有 {skipped} 个条目读不到（权限不足或链接损坏），已跳过" if skipped else ""
     parent = str(p.parent) if p.parent != p else None
     return {"path": str(p), "parent": parent, "dirs": dirs,
-            "videos": len(vids), "subs": subs_n}
+            "files": files, "videos": videos, "subs": subs_n,
+            "empty": not dirs and not files, "notice": notice}
 
 
 @app.exception_handler(HTTPException)

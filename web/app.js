@@ -2252,32 +2252,59 @@ function dirOpen(mode) {
   $('#dirModal').classList.add('on');
   const last = out ? (S.outdir || localStorage.getItem('dc.outBrowse'))
                    : (Dir.cur || localStorage.getItem('dc.lastDir'));
-  dirGo(last || '');
+  dirGo(last || '', { fromLast: !!last });
 }
 
-function dirGo(path) {
+function dirRenderError(msg, canRoot) {
   const list = $('#dirList');
+  list.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'empty warn';
+  box.textContent = msg;
+  if (canRoot) {
+    box.appendChild(document.createElement('br'));
+    const btn = document.createElement('button');
+    btn.className = 'btn sm';
+    btn.textContent = '回到此电脑，重新选盘符';
+    btn.onclick = () => dirGo('');
+    box.appendChild(btn);
+  }
+  list.appendChild(box);
+}
+
+function dirGo(path, opts) {
+  const list = $('#dirList');
+  const fromLast = !!(opts && opts.fromLast) && !!path;
   list.innerHTML = '<div class="empty">加载中…</div>';
   api('/api/folder/list?path=' + encodeURIComponent(path || ''), undefined, 'GET').then((r) => {
     Dir.cur = r.path || '';
     Dir.parent = r.parent;
     $('#dirPath').value = r.path || '此电脑 · 请选择盘符';
+    const dirs = r.dirs || [];
+    const files = r.files || [];
     const nv = r.videos || 0;
     if (Dir.mode === 'out' && r.path) {
       try { localStorage.setItem('dc.outBrowse', r.path); } catch (e) { /* 忽略 */ }
     }
-    $('#dirHint').textContent = Dir.mode === 'out'
+    let hint = Dir.mode === 'out'
       ? '点「存到这里」，成片会在里面建「剧名_时间」子文件夹'
       : (nv ? '这个文件夹里有 ' + nv + ' 个视频' + (r.subs ? '、' + r.subs + ' 个字幕文件' : '') + ' · 点「选这个」导入'
             : '进入文件夹后点「选这个」');
-    if (!r.dirs.length) {
-      list.innerHTML = nv
-        ? '<div class="empty">没有子文件夹，但这里有 <b>' + nv + '</b> 个视频 —— 点右下角「选这个」就能导入</div>'
-        : '<div class="empty">这个文件夹里没有子文件夹，也没有视频</div>';
+    if (r.notice) hint = r.notice + ' · ' + hint;
+    $('#dirHint').textContent = hint;
+
+    if (!dirs.length && !files.length) {
+      list.innerHTML = '';
+      const box = document.createElement('div');
+      box.className = 'empty';
+      box.textContent = r.empty
+        ? '这个文件夹是空的：没有子文件夹，也没有视频 / 字幕文件。换一个文件夹，或把分集视频放进来。'
+        : '这个文件夹里没有可导入的内容';
+      list.appendChild(box);
       return;
     }
     list.innerHTML = '';
-    r.dirs.forEach((d) => {
+    dirs.forEach((d) => {
       const el = document.createElement('div');
       el.className = 'ditem';
       const ico = document.createElement('span'); ico.className = 'ico'; ico.textContent = '📁';
@@ -2287,7 +2314,39 @@ function dirGo(path) {
       el.ondblclick = () => dirChoose(d.path);
       list.appendChild(el);
     });
-  }).catch((e) => { list.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+    files.forEach((f) => {
+      const el = document.createElement('div');
+      el.className = 'ditem';
+      el.style.opacity = '.8';
+      const ico = document.createElement('span');
+      ico.className = 'ico';
+      ico.textContent = f.kind === 'video' ? '🎬' : '📄';
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      const mb = f.size ? (f.size / 1024 / 1024).toFixed(1) + ' MB' : '';
+      nm.textContent = f.name + (mb ? '  ·  ' + mb : '');
+      nm.title = f.name;
+      const tag = document.createElement('span');
+      tag.className = 'ico';
+      tag.style.cssText = 'width:auto;font-size:11px;opacity:.7';
+      tag.textContent = f.kind === 'video' ? '视频' : '字幕';
+      el.append(ico, nm, tag);
+      el.onclick = () => toast('这是文件。点右下角「选这个」导入它所在的文件夹');
+      list.appendChild(el);
+    });
+  }).catch((e) => {
+    const msg = (e && e.message) ? e.message : '读取失败（原因未知）';
+    Dir.cur = '';
+    Dir.parent = null;
+    if (fromLast) {
+      // 上次记住的路径失效（换电脑 / 移动硬盘拔了）：清掉并自动回到盘符，弹窗不卡死
+      try { localStorage.removeItem(Dir.mode === 'out' ? 'dc.outBrowse' : 'dc.lastDir'); } catch (x) { /* 忽略 */ }
+      toast('上次记住的路径已失效：' + msg + '，已回到此电脑', true);
+      dirGo('');
+      return;
+    }
+    dirRenderError('无法读取这个文件夹：' + msg, !!path);
+  });
 }
 
 function dirChoose(path) {
