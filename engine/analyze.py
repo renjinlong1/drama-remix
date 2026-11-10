@@ -290,9 +290,145 @@ def _hook_kind(win: list[dict], text: str, susp: float) -> str:
     return "剧情节点"
 
 
+# ── 无台词时间窗：独立候选来源 ───────────────────────────────────────
+def _silence_windows(proj: dict, beats: list[dict]) -> list[tuple]:
+    """每集内「没有台词」的时间段：(g0, g1, 集号, 集起点, 集终点)。
+
+    segment_beats 只切有台词的区间，find_highlights 又只在这些节拍上滑窗，
+    所以沉默段里的高能画面连候选都不是——先算出补集给它们一个入口。
+    """
+    by_ep: dict[int, list[tuple[float, float]]] = {}
+    for b in beats:
+        by_ep.setdefault(b["ep"], []).append((b["g0"], b["g1"]))
+    out: list[tuple] = []
+    for ep in proj.get("episodes", []):
+        idx = int(ep["idx"])
+        lo = float(ep["offset"])
+        hi = lo + float(ep["dur"])
+        cur = lo
+        for s, e in sorted(by_ep.get(idx, [])):
+            s, e = min(hi, max(lo, s)), min(hi, max(lo, e))
+            if s > cur + 0.05:
+                out.append((cur, s, idx, lo, hi))
+            cur = max(cur, e)
+        if hi > cur + 0.05:
+            out.append((cur, hi, idx, lo, hi))
+    return out
+
+
+def find_visual_highlights(proj: dict, beats: list[dict], acts: list[dict] | None,
+                           min_dur: float = 3.0, max_dur: float = 20.0,
+                           target_dur: float = 7.0, front_pad: float = 0.6,
+                           merge_gap: float = 1.2, min_score: float = 1.0,
+                           per_ep_limit: int = 3, max_total: int = 40) -> list[dict]:
+    """从无台词时间段里，用画面/声音冲击事件生成独立钩子候选。
+
+    只在「沉默区 + 有达标冲击事件」时出候选：没扫过动作点、扫描失败、
+    或纯风景空镜都一条不加，自动退回原来的对白候选池，不影响既有行为。
+    输出字段与 find_highlights 的候选一致，额外带 visual_only / _vscore，
+    由 find_highlights 统一做量纲对齐和排序。
+
+    注：完整的硬门槛（片尾卡、转场闪白、不适画面）属于后续步骤；这里只做
+    轻量保护，避免片头黑场和「集末纯音频」的片尾曲被当成高能钩子。
+    """
+    if not acts:
+        return []
+    windows = _silence_windows(proj, beats)
+    if not windows:
+        return []
+    by_ep: dict[int, list[dict]] = {}
+    for a in acts:
+        by_ep.setdefault(int(a["ep"]), []).append(a)
+
+    out: list[dict] = []
+    for lo, hi, idx, ep_lo, ep_hi in windows:
+        evs = [a for a in by_ep.get(idx, []) if lo <= a["g0"] < hi]
+        if not evs:
+            continue
+        evs.sort(key=lambda a: a["g0"])
+        clusters: list[list[dict]] = []
+        for a in evs:
+            if clusters and a["g0"] - clusters[-1][-1]["g1"] <= merge_gap:
+                clusters[-1].append(a)
+            else:
+                clusters.append([a])
+        for cl in clusters:
+            strength = max(float(a.get("score", 0.0)) for a in cl)
+            if strength < min_score:
+                continue
+            v = max(float(a.get("v", 0.0)) for a in cl)
+            # 高能点必须落在片头：窗口起点贴着事件起点往前留 0.6 秒，往后取满 7 秒。
+            # 不能像台词候选那样把事件摆在窗口正中，否则成片要空等三四秒才等到
+            # 那一下，开头钩子就废了（叠加默认「开头入戏」提前 1 秒后约 1.6 秒入点）。
+            t0 = max(lo, cl[0]["g0"] - front_pad)
+            t1 = min(hi, max(t0 + target_dur, cl[-1]["g1"] + 0.3))
+            if t1 - t0 < min_dur:
+                t0 = max(lo, t1 - min_dur)
+            dur = t1 - t0
+            if dur < min_dur or dur > max_dur:
+                continue
+            if t0 < ep_lo + 0.3:                     # 片头黑场 / logo 的第一帧
+                continue
+            if t1 > ep_hi - 0.3 and v < 0.3:         # 集末只有声音，多半是片尾曲
+                continue
+            out.append({
+                "g0": round(t0, 3), "g1": round(t1, 3),
+                "dur": round(dur, 3), "ep": idx,
+                "text": "", "score": 0.0,
+                "act": round(strength, 2), "susp": 0.0,
+                "at_end": False,
+                "kind": "动作冲突" if v >= 0.5 else "爆发点",
+                "hits": [], "beats": [],
+                "visual_only": True,
+                "_vscore": round(strength, 3),
+            })
+            if len(out) >= max_total:
+                break
+        if len(out) >= max_total:
+            break
+
+    out.sort(key=lambda c: (c["ep"], -c["_vscore"]))
+    kept: list[dict] = []
+    cnt: dict[int, int] = {}
+    for c in out:
+        if cnt.get(c["ep"], 0) >= per_ep_limit:
+            continue
+        cnt[c["ep"]] = cnt.get(c["ep"], 0) + 1
+        kept.append(c)
+    kept.sort(key=lambda c: c["g0"])
+    return kept
+
+
+def _ensure_visual(picked: list[dict], cands: list[dict], reserve: int) -> list[dict]:
+    """保证候选池里至少有几条纯画面钩子，否则新来源会被全局排序整个吃掉。
+
+    只替换分数最低的非视觉候选；完整的类型配额与近重复去重留给下一步。
+    """
+    if reserve <= 0:
+        return picked
+    chosen = {id(c) for c in picked}
+    have = sum(1 for c in picked if c.get("visual_only"))
+    pool = [c for c in cands if c.get("visual_only") and id(c) not in chosen]
+    pool.sort(key=lambda c: -c.get("_eff", c["score"]))
+    for c in pool:
+        if have >= reserve:
+            break
+        victims = [p for p in picked if not p.get("visual_only")]
+        if not victims:
+            break
+        victim = min(victims, key=lambda p: p.get("_eff", p["score"]))
+        picked.remove(victim)
+        picked.append(c)
+        chosen.add(id(c))
+        have += 1
+    return picked
+
+
 def find_highlights(beats: list[dict], top_k: int = 18,
                     min_dur: float = 4.5, max_dur: float = 20.0,
-                    min_keep: int = 15, seed: int | None = None) -> list[dict]:
+                    min_keep: int = 15, seed: int | None = None,
+                    extra_visual: list[dict] | None = None,
+                    visual_reserve: int = 3) -> list[dict]:
     """找出 15-20 个高光开头候选。
 
     一段剧情算不算高光，看三件事：
@@ -352,6 +488,18 @@ def find_highlights(beats: list[dict], top_k: int = 18,
                 "beats": [b["id"] for b in win],
             })
 
+    # 视觉候选的分数来自另一套量纲（事件强度约 0.85~3），直接混排会被台词分
+    # 全压下去。用台词候选分数的中位数当锚点，把它们映射到同一区间的中段。
+    if extra_visual:
+        ds = sorted(c["score"] for c in cands)
+        anchor = max(4.0, ds[len(ds) // 2] if ds else 12.0)
+        for vc in extra_visual:
+            c = dict(vc)                     # 别改动调用方持有的对象
+            raw = float(c.pop("_vscore", 0.0))
+            t = min(1.0, max(0.0, (raw - 0.85) / 2.15))
+            c["score"] = round(anchor * (0.8 + 0.45 * t), 2)
+            cands.append(c)
+
     # 抖动只影响「谁先被挑中」，不动展示出去的分数
     if seed:
         rng = random.Random(int(seed) & 0xFFFFFFFF)
@@ -385,6 +533,7 @@ def find_highlights(beats: list[dict], top_k: int = 18,
         if len(picked) >= goal:
             break
 
+    picked = _ensure_visual(picked, cands, min(visual_reserve, goal))
     picked.sort(key=lambda c: (-c["_eff"], c["g0"]))
     for i, p in enumerate(picked):
         p.pop("_eff", None)
@@ -469,14 +618,19 @@ def analyze(proj: dict, seed: int | None = None) -> dict:
     beats = segment_beats(proj)
     acts = proj.get("acts") or []
     attach_acts(beats, acts)
+    # 无台词时间窗里的高能画面，走独立候选来源；没有动作点时返回空表，
+    # find_highlights 会自然退回原来的纯对白候选池
+    visual = find_visual_highlights(proj, beats, acts)
     dialog = sum(b["dur"] for b in beats)
     total = proj["total"]
     # 钩子池的随机种子跟着项目走：项目里存了就每次一致，没有（老项目）就保持原来的确定性排序
     sd = proj.get("hook_seed") if seed is None else seed
     return {
         "beats": beats,
-        "highlights": find_highlights(beats, top_k=18, min_keep=15, seed=sd),
+        "highlights": find_highlights(beats, top_k=18, min_keep=15, seed=sd,
+                                      extra_visual=visual),
         "acts": len(acts),
+        "visual_cands": len(visual),
         "endings": find_endings(beats, total),
         "stats": {
             "total": round(total, 1),

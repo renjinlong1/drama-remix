@@ -723,6 +723,8 @@ function renderHooks() {
       (Math.abs(mv) > 0.01 ? ' mvd' : '');
     const kind = h.kind || '剧情节点';
     const score = h.manual ? '手动' : h.score.toFixed(0);
+    const label = String(h.text || '').slice(0, 56) ||
+      (h.visual_only ? '无台词 · 画面钩子' : '');
     return '<div class="' + cls + '" data-i="' + i + '">' +
       '<i class="hdel" title="从候选里删除">✕</i>' +
       '<span class="hkind ' + hookKindClass(kind) + '">' + esc(kind) + '</span>' +
@@ -733,7 +735,7 @@ function renderHooks() {
         thumbT(h).toFixed(2) + '" alt="">' +
       '<div class="htop"><span>第 ' + h.ep + ' 集</span><span>·</span><span>' + h.dur.toFixed(1) + 's</span>' +
         '<span class="hsc">' + score + '</span></div>' +
-      '<div class="htxt">' + esc(String(h.text || '').slice(0, 56)) + '</div>' +
+      '<div class="htxt">' + esc(label) + '</div>' +
       '<div class="hmeta"><span' + (Math.abs(mv) > 0.01 ? ' class="mvx"' : '') + '>' +
         fmt1(h.g0) + ' → ' + fmt1(h.g1) + '</span>' +
         (Math.abs(mv) > 0.01 ? '<em>' + (mv > 0 ? '+' : '−') + Math.abs(mv).toFixed(1) + 's</em>' : '') +
