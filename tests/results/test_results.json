@@ -1,5 +1,5 @@
 {
-  "time": "2026-11-10 12:22:59",
+  "time": "2026-11-10 16:32:33",
   "cases": 9,
   "passed": 9,
   "checks": 110,
@@ -16,16 +16,16 @@
       "detail": "30 -> 10"
     }
   ],
-  "elapsed_s": 19.5,
+  "elapsed_s": 20.8,
   "temp_before": {
     "render_dirs": 0,
     "render_files": 0,
-    "thumbs": 0
+    "thumbs": 160
   },
   "temp_after": {
     "render_dirs": 0,
     "render_files": 0,
-    "thumbs": 0
+    "thumbs": 160
   },
   "records": [
     {
@@ -84,7 +84,7 @@
         {
           "name": "结果一致",
           "ok": true,
-          "detail": "cdf6dd0723a00264 / cdf6dd0723a00264"
+          "detail": "9373b91c445ed251 / 9373b91c445ed251"
         },
         {
           "name": "成片存在",
@@ -103,7 +103,7 @@
         }
       ],
       "errors": [],
-      "fingerprint": "cdf6dd0723a00264",
+      "fingerprint": "9373b91c445ed251",
       "render": {
         "duration": 42.08,
         "size_kb": 7303.9,
@@ -372,11 +372,11 @@
         {
           "name": "结果一致",
           "ok": true,
-          "detail": "2ad1521a9c6f462c / 2ad1521a9c6f462c"
+          "detail": "96451b6ed8dfaae5 / 96451b6ed8dfaae5"
         }
       ],
       "errors": [],
-      "fingerprint": "2ad1521a9c6f462c"
+      "fingerprint": "96451b6ed8dfaae5"
     },
     {
       "case": "avi_360x640_8s",
@@ -434,11 +434,11 @@
         {
           "name": "结果一致",
           "ok": true,
-          "detail": "8263d5808624c94f / 8263d5808624c94f"
+          "detail": "17e76172d237df80 / 17e76172d237df80"
         }
       ],
       "errors": [],
-      "fingerprint": "8263d5808624c94f"
+      "fingerprint": "17e76172d237df80"
     },
     {
       "case": "webm_360x640_8s",
@@ -496,11 +496,11 @@
         {
           "name": "结果一致",
           "ok": true,
-          "detail": "4b66feb0be9ed4c5 / 4b66feb0be9ed4c5"
+          "detail": "d22fee3bbe4649ad / d22fee3bbe4649ad"
         }
       ],
       "errors": [],
-      "fingerprint": "4b66feb0be9ed4c5"
+      "fingerprint": "d22fee3bbe4649ad"
     },
     {
       "case": "h264_1280x720_10s",
@@ -640,11 +640,11 @@
         {
           "name": "结果一致",
           "ok": true,
-          "detail": "ca071887518367ca / ca071887518367ca"
+          "detail": "62c385d28c194287 / 62c385d28c194287"
         }
       ],
       "errors": [],
-      "fingerprint": "ca071887518367ca"
+      "fingerprint": "62c385d28c194287"
     }
   ]
 }

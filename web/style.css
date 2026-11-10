@@ -398,6 +398,8 @@ select.input{cursor:pointer}
 .hkind.k-act{background:rgba(94,48,22,.86);color:#ffc08a;border-color:rgba(255,138,61,.35)}
 .hkind.k-talk{background:rgba(56,38,78,.86);color:#cbb0ff;border-color:rgba(180,122,255,.3)}
 .hkind.k-man{background:rgba(24,58,38,.86);color:#8fd6a4;border-color:rgba(90,200,130,.3)}
+/* 亲密接触单独一档颜色：吻戏/拥抱和"动作冲突"在视觉上要能一眼分开 */
+.hkind.k-int{background:rgba(78,30,54,.88);color:#ffa9c9;border-color:rgba(255,120,170,.38)}
 .hdel{position:absolute;top:6px;right:6px;width:18px;height:18px;line-height:17px;text-align:center;
   border-radius:50%;background:rgba(10,14,20,.75);color:#9aa5ba;font-size:12px;cursor:pointer;
   opacity:0;transition:.15s;z-index:3;border:1px solid rgba(255,255,255,.08)}

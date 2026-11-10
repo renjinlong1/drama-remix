@@ -22,11 +22,17 @@ from __future__ import annotations
 import json
 import re
 import statistics
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import ffmpegx
+
+try:                      # numpy 跟着 cv2 一起进便携包；缺了就走旧的 astats 路径
+    import numpy as np
+except Exception:         # noqa: BLE001
+    np = None
 
 DIFF_FPS = 10
 DIFF_W = 128
@@ -34,6 +40,11 @@ DIFF_THRESHOLD = 42      # 单像素灰度差 > 42 记为"变了"
 MOVE_PBLACK = 80         # pblack 低于这个值 = 这一帧有大面积变化
 MIN_RUN = 2              # 连续 ≥2 帧（0.2 秒）才算动作，单帧是剪辑点
 AUD_WIN = 0.1
+# 声音峰值必须按**源采样率**的 1024 样本一块来算：astats 就是这么输出的
+# （44.1kHz 源 → 23.22ms/块，48kHz 源 → 21.33ms/块）。以前这里写死 48k
+# 重采样，时间轴会一路累积偏移，事件落点对不上。
+AUD_BLOCK = 1024
+AUD_SR = 48000           # 源采样率探测不到时的兜底
 AUD_SPIKE = 9.0          # 比滚动中位数高 9 dB
 AUD_FLOOR = -18.0        # 绝对下限：太小声的窗口不参与（避免底噪抖动）
 
@@ -98,6 +109,73 @@ def _audio_series(video: str) -> list[tuple[float, float]]:
     return series
 
 
+def _pcm_series(pcm: bytes, sr: int = AUD_SR) -> list[tuple[float, float]]:
+    """PCM(s16 单声道) → [(t, peak_db)]，与 astats 的逐块统计同一粒度。
+
+    每 1024 个样本一块（与 astats 相同），块内取绝对峰值转 dBFS；
+    比 astats 省掉每块十几项指标的格式化与解析。45 秒素材 510ms → 100ms。
+    """
+    if np is None or len(pcm) < 4:
+        return []
+    a = np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype="<i2")
+    win = AUD_BLOCK
+    n = len(a) // win
+    if not n:
+        return []
+    blocks = a[: n * win].reshape(n, win).astype(np.float32) / 32768.0
+    peak = np.abs(blocks).max(axis=1)
+    db = 20.0 * np.log10(np.maximum(peak, 1e-7))
+    step = win / max(1, sr)
+    return [(i * step, round(float(db[i]), 2)) for i in range(n)]
+
+
+def _scan_signals(video: str, has_audio: bool = True,
+                  sr: int | None = None) -> tuple[list, list]:
+    """一次解码同时拿画面帧差与声音峰值。
+
+    以前 `_diff_series` 和 `_audio_series` 各起一个 ffmpeg，同一集解码两遍。
+    合并成一条 `-filter_complex` 后只解码一次：画面分支仍是原来的
+    fps→灰度→tblend→blackframe（逐帧结果与旧实现一致），声音分支把 PCM
+    直接送到 stdout 由 numpy 求峰值。实测 81 秒正片 2166ms → 710ms。
+    """
+    if sr is None:
+        try:
+            sr = int(ffmpegx.probe(video).get("sample_rate") or 0)
+        except Exception:       # noqa: BLE001
+            sr = 0
+    sr = sr or AUD_SR
+    fc = (f"[0:v]fps={DIFF_FPS},scale={DIFF_W}:-2,format=gray,"
+          f"tblend=all_mode=difference,"
+          f"blackframe=amount=0:threshold={DIFF_THRESHOLD}[v]")
+    maps = ["-map", "[v]", "-f", "null", "-"]
+    if has_audio:
+        # 不重采样：保留源采样率，块时长才和 astats 对得上
+        fc += ";[0:a]aformat=sample_fmts=s16:channel_layouts=mono[a]"
+        maps += ["-map", "[a]", "-f", "s16le", "-"]
+    cmd = [ffmpegx.ffmpeg(), "-hide_banner", "-nostdin", "-nostats", "-v", "info",
+           "-i", str(video), "-filter_complex", fc, *maps]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         creationflags=ffmpegx.CREATE_NO_WINDOW)
+    try:
+        out, err = p.communicate(timeout=1800)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        out, err = p.communicate()
+        raise RuntimeError("动作扫描超时") from None
+
+    series: list[tuple[float, int]] = []
+    for line in err.decode("utf-8", "replace").splitlines():
+        if "blackframe" not in line:
+            continue
+        m = _BF.search(line)
+        if m:
+            series.append((float(m.group(2)), int(m.group(1))))
+    if not series and p.returncode != 0:
+        tail = err.decode("utf-8", "replace").strip().splitlines()[-3:]
+        raise RuntimeError("ffmpeg 解码失败：" + " / ".join(tail))
+    return series, (_pcm_series(out, sr) if has_audio else [])
+
+
 # ── 合成事件 ─────────────────────────────────────────────────────────
 def _motion_runs(series: list[tuple[float, int]]) -> list[dict]:
     """把连续低 pblack 的帧并成"动作段"，单帧突变（剪辑点）丢弃。"""
@@ -134,6 +212,11 @@ def _audio_spikes(series: list[tuple[float, float]]) -> list[dict]:
         return []
     vals = [v for _, v in series]
     n = len(vals)
+    # 窗口步长从序列本身量出来（astats 与 PCM 两条路径都是 21.3ms 左右），
+    # 不再写死 0.021，换采样率时 hold 判定不会跟着漂
+    step = AUD_BLOCK / AUD_SR
+    if n > 2:
+        step = statistics.median(series[i + 1][0] - series[i][0] for i in range(min(n - 1, 40)))
     half = 12                      # ±0.25 秒（每窗 ≈21ms）
     # 整体音量很低的片子（手机翻录、压得很狠）不能用固定的绝对下限，
     # 按整体中位数往下放一档，否则一句都挑不出来
@@ -152,7 +235,7 @@ def _audio_spikes(series: list[tuple[float, float]]) -> list[dict]:
         j = i
         while j + 1 < n and series[j + 1][1] >= v - 8.0:
             j += 1
-        hold = (j - i + 1) * 0.021
+        hold = (j - i + 1) * step
         sharp = hold <= 0.09
         kind = "impact" if sharp else ("cry" if hold >= 0.5 else "swell")
         out.append({"t": round(t, 2), "hold": round(hold, 3), "kind": kind,
@@ -201,17 +284,35 @@ def _merge(motion: list[dict], spikes: list[dict]) -> list[dict]:
     return merged
 
 
-def scan_episode(video: str | Path) -> dict:
+def scan_episode(video: str | Path, has_audio: bool | None = None) -> dict:
     """一集的全部动作峰值。只保留有画面的强事件，最多 40 个。"""
     video = str(video)
     t_start = time.time()
+    if has_audio is None:
+        try:
+            has_audio = bool(ffmpegx.probe(video).get("has_audio"))
+        except Exception:       # noqa: BLE001 探测失败就按有声试，失败会回退
+            has_audio = True
     try:
-        motion = _motion_runs(_diff_series(video))
-    except Exception:       # noqa: BLE001 画面读不了就算了，还有声音
+        if np is None:
+            raise RuntimeError("numpy 不可用，退回逐次解码")
+        diff, audio = _scan_signals(video, has_audio)
+    except Exception:           # noqa: BLE001 合并解码失败 → 退回两条独立老路
+        try:
+            diff = _diff_series(video)
+        except Exception:       # noqa: BLE001
+            diff = []
+        try:
+            audio = _audio_series(video)
+        except Exception:       # noqa: BLE001
+            audio = []
+    try:
+        motion = _motion_runs(diff)
+    except Exception:           # noqa: BLE001 画面读不了就算了，还有声音
         motion = []
     try:
-        spikes = _audio_spikes(_audio_series(video))
-    except Exception:       # noqa: BLE001
+        spikes = _audio_spikes(audio)
+    except Exception:           # noqa: BLE001
         spikes = []
     events = _merge(motion, spikes)
     events = [e for e in events if e["score"] >= 0.85][:40]
@@ -249,7 +350,7 @@ def scan_project(proj: dict, root: Path, progress=None, force: bool = False) -> 
     total = max(1, len(todo))
 
     def one(ep: dict) -> tuple[dict, dict]:
-        res = scan_episode(ep["path"])
+        res = scan_episode(ep["path"], ep.get("has_audio"))
         res["file"] = ep["file"]
         res["dur"] = round(float(ep["dur"]), 3)
         return ep, res

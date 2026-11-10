@@ -14,6 +14,7 @@ const S = {
   hkPrefs: { enabled: {}, weight: {} },
   hkShift: {}, endShift: {},
   batchAlloc: 'total', batchTotal: 20, outdir: '', outShown: '', nameTpl: '',
+  hookMeta: {},
   target: 360, lead: 1, tailMode: 'auto', tailFixed: 2, efVideoDur: 0, jobTimer: null, saveTimer: null,
 };
 
@@ -170,6 +171,7 @@ function applyProject(d) {
   S.name = d.name; S.total = d.total; S.eps = d.eps || [];
   S.folder = d.folder || S.folder || '';
   S.beats = d.beats || []; S.highlights = d.highlights || [];
+  S.hookMeta = d.hook_meta || {};
   S.endings = d.endings || [];
   S.plan = null; S.win = new Set(); S.drop = new Set();
   S.hook = null; S.endhook = null; S.batch = {}; S.batchEnd = {}; S.bendCands = {};
@@ -480,6 +482,7 @@ function hookAll() {
 const HK_TYPES = [
   { key: 'energy',      label: '高能画面', group: 'visual' },
   { key: 'action',      label: '动作冲突', group: 'visual' },
+  { key: 'intimacy',    label: '亲密接触', group: 'talk' },
   { key: 'tension',     label: '情感张力', group: 'visual' },
   { key: 'performance', label: '戏点张力', group: 'visual' },
   { key: 'dialog',      label: '台词冲突', group: 'talk' },
@@ -539,6 +542,7 @@ function hookShown() {
 
 function hookKindClass(h) {
   if (h.manual) return 'k-man';
+  if (hookType(h) === 'intimacy') return 'k-int';
   const meta = HK_TYPE_MAP[hookType(h)];
   return meta && meta.group === 'visual' ? 'k-act' : 'k-talk';
 }
@@ -665,6 +669,7 @@ function planCounts(list) {
 
 /* 批量状态同步到右下角出片卡：没设条数=单条顺剪，设了=批量 */
 function renderBatchBar() {
+  try {
   const list = batchItems();
   const btn = $('#btnRender'), line = $('#batchLine');
   const brief = $('#bPlan'), row = $('.cntrow');
@@ -694,6 +699,7 @@ function renderBatchBar() {
     ? '分配 ' + counts.slice(0, 8).join('·') + (counts.length > 8 ? '…' : '')
     : '共 ' + total + ' 条';
   $('#bTotal').disabled = !isTotal;
+  } finally { syncClearPicks(); }
 }
 
 function setBatchCount(h, n) {
@@ -853,11 +859,16 @@ function thumbT(h) {
 }
 
 function renderHooks() {
+  try {
   renderHookFilter();
   const box = $('#hooks');
   const all = hookAll();
   const shown = hookShown();
-  $('#hkCount').textContent = all.length ? ('共 ' + all.length + ' 个') : '—';
+  const fm = S.hookMeta || {};
+  $('#hkCount').textContent = all.length
+    ? ('共 ' + all.length + ' 个' + (fm.front_count
+        ? ' · 前' + fm.front_eps + '集 ' + fm.front_count + ' 个' : ''))
+    : '—';
   $('#btnResetHooks').hidden = !S.hkHide.size && !S.hkAdd.length && !Object.keys(S.hkShift).length;
   if (!all.length) {
     box.innerHTML = '<div class="empty">导入剧集后自动生成</div>';
@@ -874,7 +885,8 @@ function renderHooks() {
     const mv = Number(h.shift || 0);
     const cls = 'hook' + (on ? ' on' : '') + (n ? ' batched' : '') + (h.manual ? ' man' : '') +
       (Math.abs(mv) > 0.01 ? ' mvd' : '');
-    const kind = h.primary_label || h.kind || '剧情节点';
+    const sub = { slap: ' · 巴掌', kiss: ' · 亲吻', intimate: ' · 亲密' }[h.subtype] || '';
+    const kind = (h.primary_label || h.kind || '剧情节点') + sub;
     const score = h.manual ? '手动' : h.score.toFixed(0);
     const label = String(h.text || '').slice(0, 56) ||
       (h.visual_only ? '无台词 · 画面钩子' : '');
@@ -935,7 +947,7 @@ function renderHooks() {
     el.onclick = (e) => {
       e.stopPropagation();
       clearHook();
-      toast('已取消选择，回到默认开头');
+      toast('已取消这条开头，回到默认开头');
     };
   });
   $$('#hooks .hdel').forEach((el) => {
@@ -945,6 +957,7 @@ function renderHooks() {
     };
   });
   bindThumbs('#hooks');
+  } finally { syncClearPicks(); }   // 任何一条 return 分支都要刷新"清空选择"按钮
 }
 
 /* ── 缩略图抽不出来时：说清楚 + 点一下跑自检 ─────────
@@ -1518,6 +1531,55 @@ function clearHook(silent) {
   if (!silent) makePlan();
 }
 
+/* ── 一键清空所有已选项 ─────────────────────────────────
+   以前「取消选择」只清开头钩子，卡片上的 ×N 条数、指定结尾、
+   结尾钩子都得一个个撤回。这里把四类选择一起收进来，点一次回到初始状态。 */
+function pickStats() {
+  const list = batchItems();
+  const copies = list.length ? planCounts(list).reduce((a, b) => a + b, 0) : 0;
+  const ends = Object.keys(S.batchEnd)
+    .reduce((a, k) => a + (S.batchEnd[k] || []).filter(Boolean).length, 0);
+  return {
+    hook: S.hook ? 1 : 0,
+    cards: list.length,
+    copies,
+    ends,
+    endhook: S.endhook ? 1 : 0,
+    total: (S.hook ? 1 : 0) + list.length + ends + (S.endhook ? 1 : 0),
+  };
+}
+
+/* 按钮上直接写清将清掉多少项，空选时置灰，避免误以为"点了没反应" */
+function syncClearPicks() {
+  const btn = $('#btnClearHook');
+  if (!btn) return;
+  const s = pickStats();
+  btn.textContent = s.total ? '清空全部选择（' + s.total + '）' : '清空全部选择';
+  btn.disabled = !s.total;
+  btn.title = s.total
+    ? '一次清空：开头钩子 ' + s.hook + ' · 卡片条数 ' + s.cards + ' 张（共 ' + s.copies +
+      ' 条）· 指定结尾 ' + s.ends + ' 条 · 结尾钩子 ' + s.endhook
+    : '当前没有已选内容';
+}
+
+function clearAllPicks(silent) {
+  const s = pickStats();
+  if (!s.total) return null;
+  S.hook = null;
+  S.endhook = null;
+  S.batch = {};
+  S.batchEnd = {};
+  S.bendCands = {};
+  renderHooks();
+  renderEnds();
+  renderHookBox();
+  renderBatchBar();
+  draw();
+  syncClearPicks();
+  if (!silent) makePlan();
+  return s;
+}
+
 function selectHook(h, silent) {
   // 再点一次已选中的候选 = 取消选择（卡片上的「取消选择」按钮同一套逻辑）
   if (hookSelected(h)) {
@@ -1562,6 +1624,7 @@ function endList() {
 }
 
 function renderEnds() {
+  try {
   const box = $('#ends');
   const list = endList();
   if (!list.length) { box.innerHTML = '<div class="empty">导入剧集后自动生成</div>'; return; }
@@ -1606,6 +1669,7 @@ function renderEnds() {
     };
   });
   bindThumbs('#ends');
+  } finally { syncClearPicks(); }
 }
 
 function selectEnd(e2, silent) {
@@ -2798,7 +2862,16 @@ $('#hookLead').onchange = (e) => {
   renderHookBox();
   makePlan();
 };
-$('#btnClearHook').onclick = () => { clearHook(); toast('已取消选择，回到默认开头'); };
+$('#btnClearHook').onclick = () => {
+  const s = clearAllPicks();
+  if (!s) { toast('当前没有已选内容'); return; }
+  const parts = [];
+  if (s.hook) parts.push('开头钩子 1 个');
+  if (s.cards) parts.push('卡片 ' + s.cards + ' 张（' + s.copies + ' 条）');
+  if (s.ends) parts.push('指定结尾 ' + s.ends + ' 条');
+  if (s.endhook) parts.push('结尾钩子 1 个');
+  toast('已清空 ' + s.total + ' 项：' + parts.join(' · '));
+};
 
 /* 右栏参数区页签：顺剪设置 / 开头钩子 / 包装（同一张卡内切换，避免挤成一条缝） */
 const RTAB_HINT = { plan: '', hook: '选一个当开头', pack: '角标 / 尾帧 / 模板' };

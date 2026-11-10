@@ -397,6 +397,7 @@ def _proj_payload(p: dict, a: dict) -> dict:
         "stats": a["stats"],
         "beats": a["beats"],
         "highlights": a["highlights"],
+        "hook_meta": a.get("hook_meta") or {},
         "acts": a.get("acts", 0),
         "endings": a.get("endings", []),
     }

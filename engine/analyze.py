@@ -78,6 +78,79 @@ EN_LEX = {
 EN_FILLER = ["okay", "ok", "yes", "no", "yeah", "thanks", "thank you", "hello", "hi",
              "sure", "fine", "alright", "right", "well", "oh", "wow", "hmm", "uh"]
 
+# ── 亲密 / 接触：吻戏、拥抱、床戏 ────────────────────────────────────
+# 这类戏不靠"冲突"抓人，靠情绪张力。词表刻意收窄：
+# 只认"吻/亲我/抱住/床上"这些明确指向亲密关系的组合，
+# 不用「亲」「抱」「睡」单字——否则"亲妈""抱歉""睡觉"全会误伤。
+INTIMACY_STRONG = {
+    "吻", "亲吻", "吻我", "吻了", "吻上", "亲我", "亲上", "亲了", "亲下去",
+    "抱住", "抱我", "搂住", "搂着", "怀里", "床上", "一起睡", "陪我睡", "上床",
+    "脱衣服", "脱掉衣服", "衣衫不整", "肌肤", "身体",
+    "kiss", "kissed", "kissing", "in bed", "sleep with", "make love",
+    "undress", "naked", "take off your", "touch me", "bedroom",
+}
+INTIMACY_WEAK = {
+    "拥抱", "抱着", "胸口", "肩膀", "锁骨", "呼吸", "心跳", "脸红", "害羞",
+    "暧昧", "缠绵", "贴近", "耳语", "低喘",
+    "hug", "hugged", "hold me", "closer", "lips", "neck", "skin", "moan",
+    "body", "shirt",
+}
+# 巴掌：动作冲击 + 这几个词基本可以确定是打脸戏，单独标出来方便挑
+SLAP_WORDS = ("巴掌", "耳光", "扇了", "扇他", "扇她", "扇你", "扇在",
+              "slap", "slapped", "smack")
+KISS_WORDS = ("吻", "亲我", "亲吻", "kiss")
+
+_INTIMACY_EN = re.compile(
+    r"(?<![a-z])(" + "|".join(re.escape(w) for w in
+                              sorted(INTIMACY_STRONG | INTIMACY_WEAK, key=len, reverse=True)
+                              if w.isascii()) + r")(?![a-z])", re.I)
+
+
+def _intimacy_score(text: str) -> float:
+    """台词里的亲密信号强度 0~1。一个强词 0.6，两个封顶；弱词各 0.18。
+
+    按词长优先、区间去重：「吻」在「吻了」里面不重复计分，否则一句话
+    命中好几个包含关系的词，分数会虚高到顶。
+    """
+    if not text:
+        return 0.0
+    low = text.lower()
+    spans: list[tuple[int, int]] = []
+
+    def _mark(word: str) -> int:
+        n = 0
+        start = 0
+        while True:
+            i = low.find(word, start)
+            if i < 0:
+                break
+            end = i + len(word)
+            if not any(i < e and s < end for s, e in spans):
+                spans.append((i, end))
+                n += 1
+            start = end
+        return n
+
+    strong = 0
+    for w in sorted((w for w in INTIMACY_STRONG if not w.isascii()), key=len, reverse=True):
+        strong += _mark(w)
+    weak = 0
+    for w in sorted((w for w in INTIMACY_WEAK if not w.isascii()), key=len, reverse=True):
+        weak += _mark(w)
+    en = len(set(m.group(0).lower() for m in _INTIMACY_EN.finditer(low)))
+    strong += en
+    return round(min(1.0, min(2, strong) * 0.6 + min(3, weak) * 0.18), 3)
+
+
+def _subtype(text: str, intim: float) -> str:
+    """给候选一个更好认的小标签：巴掌 / 亲吻 / 亲密。只做标注，不改分数。"""
+    low = (text or "").lower()
+    if any(w in low for w in SLAP_WORDS):
+        return "slap"
+    if any(w in low for w in KISS_WORDS):
+        return "kiss"
+    return "intimate" if intim >= 0.5 else ""
+
 # 结尾悬念（英文）
 EN_SUSPENSE: list[tuple[str, float]] = [
     ("who are you", 3.0), ("who is he", 3.0), ("who is she", 3.0), ("who did this", 2.8),
@@ -428,22 +501,31 @@ def _ensure_visual(picked: list[dict], cands: list[dict], reserve: int) -> list[
 
 
 # ── 类型判定 / 证据 / 配额重排（可替换的规则层） ─────────────────────
-TYPE_ORDER = ("energy", "action", "dialog", "reveal", "suspense",
-              "tension", "performance")
+TYPE_ORDER = ("energy", "action", "dialog", "reveal", "intimacy",
+              "suspense", "tension", "performance")
 TYPE_LABELS = {
     "energy": "高能画面", "action": "动作冲突", "dialog": "台词冲突",
-    "reveal": "身份反转", "suspense": "悬念留扣",
+    "reveal": "身份反转", "suspense": "悬念留扣", "intimacy": "亲密接触",
     "performance": "戏点张力", "tension": "情感张力",
 }
 # 旧前端只认五类；kind 原值不动，新类型通过 primary_label 对外展示
 TYPE_KIND_ALIAS = {
     "energy": "爆发点", "action": "动作冲突", "dialog": "台词冲突",
-    "reveal": "身份反转", "suspense": "悬念留扣",
+    "reveal": "身份反转", "suspense": "悬念留扣", "intimacy": "剧情节点",
     "performance": "剧情节点", "tension": "剧情节点",
 }
 # 稀缺度加成：新类型天然少见，给一点入池优势，但不改变展示分
 TYPE_BOOST = {"energy": 0.10, "performance": 0.08, "tension": 0.08,
-              "action": 0.04, "suspense": 0.03, "reveal": 0.02, "dialog": 0.0}
+              "action": 0.04, "suspense": 0.03, "reveal": 0.02,
+              "intimacy": 0.06, "dialog": 0.0}
+
+# 前 15 集是短剧留人的关键区。候选池在这里刻意加密：
+# 排序小幅加权 + 每集多放一条 + 前段最多占七成，既不挤干净后段，
+# 又能让前段每一两集就有一个能用的开头。
+FRONT_EPS = 15
+FRONT_BOOST = 1.20
+FRONT_SHARE = 0.80       # 前段最多占八成：加密是"更密"，不是"只剩前段"
+FRONT_MIN_SHARE = 0.45   # 前 15 集至少占候选池的 45%
 
 
 def _clamp01(x: float) -> float:
@@ -470,6 +552,7 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
 
     dialog = _clamp01(len(hits & conflict_words) / 2.0 + min(1.0, len(text) / 40.0) * 0.25)
     reveal = _clamp01(len(hits & reveal_words) / 1.5)
+    intim = _clamp01(float(c.get("intim", 0.0)))
     susp_s = _clamp01(float(c.get("susp", 0.0)) / 3.0)
     motion = _clamp01(v / 1.4 if v else float(c.get("act", 0.0)) / 2.5)
     audio = _clamp01(a / 1.4 if a else 0.0)
@@ -477,7 +560,7 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
     stillness = _clamp01(1.0 - motion - 0.25 * audio + (0.2 if dur >= 6.0 else 0.0))
     position = _clamp01(1.0 - (ep - 1) / max(1, ep_count))
     signals = {
-        "dialog": dialog, "reveal": reveal, "suspense": susp_s,
+        "dialog": dialog, "reveal": reveal, "suspense": susp_s, "intimacy": intim,
         "motion": motion, "audio": audio, "intensity": intensity,
         "stillness": stillness, "position": position,
     }
@@ -487,6 +570,8 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
         ("action",      lambda s: s["motion"] >= 0.30 or s["intensity"] >= 0.60),
         ("dialog",      lambda s: s["dialog"] >= 0.35),
         ("reveal",      lambda s: s["reveal"] >= 0.34),
+        # 亲密戏排在冲突/反转之后：一句"你凭什么亲我"该算台词冲突而不是亲密接触
+        ("intimacy",    lambda s: s["intimacy"] >= 0.50),
         ("suspense",    lambda s: s["suspense"] >= 0.34),
         ("tension",     lambda s: s["stillness"] >= 0.50 and s["audio"] >= 0.28 and s["dialog"] <= 0.30),
         ("performance", lambda s: s["stillness"] >= 0.62 and s["dialog"] <= 0.45),
@@ -499,6 +584,7 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
         "energy": (motion + intensity + audio) / 3.0,
         "action": max(motion, intensity),
         "dialog": dialog, "reveal": reveal, "suspense": susp_s,
+        "intimacy": intim,
         "tension": (stillness + audio) / 2.0,
         "performance": stillness * (1.0 - dialog),
     }.get(primary, 0.3)
@@ -509,6 +595,9 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
     if hits:
         evidence.append({"kind": "dialog", "strength": dialog,
                          "note": "命中台词：" + " / ".join(sorted(hits)[:3])})
+    if intim:
+        evidence.append({"kind": "dialog", "strength": intim,
+                         "note": "亲密 / 接触台词"})
     if motion or intensity:
         evidence.append({"kind": "visual", "strength": max(motion, intensity),
                          "note": "画面冲击 / 运动强度"})
@@ -538,6 +627,7 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
         "types": types,
         "primary_type": primary,
         "primary_label": TYPE_LABELS.get(primary, "剧情节点"),
+        "subtype": _subtype(text, intim),
         "confidence": confidence,
         "signals": signals,
         "evidence": evidence,
@@ -602,6 +692,54 @@ def cap_visual(picked: list[dict], cands: list[dict], goal: int,
         picked.remove(victim)
         picked.append(repl[0])
         chosen.add(id(repl[0]))
+    return picked
+
+
+def ensure_front(picked: list[dict], cands: list[dict], goal: int,
+                 front_min: int, front_max: int | None = None) -> list[dict]:
+    """最后一道：把前 15 集的条数收进 [front_min, front_max]。
+
+    前面的去重、画面保底、类型配额都按分数补位，会把前段候选挤出去；
+    用户要的是"前 15 集密集"，所以这里宁可牺牲一点整体分，也要把前段填够。
+    同时守住上限：前段超过八成时换回分数最高的后段候选，别把后段挤干净。
+    换入换出都检查近重复，不会塞进同一段。
+    """
+    if front_min <= 0:
+        return picked
+    chosen = {id(c) for c in picked}
+
+    have = [p for p in picked if p.get("front")]
+    if len(have) < front_min:
+        pool = sorted((c for c in cands if c.get("front") and id(c) not in chosen),
+                      key=lambda x: -x.get("rank_score", 0))
+        for c in pool:
+            if len(have) >= front_min:
+                break
+            if any(_overlap_near(c, p) for p in picked):
+                continue
+            back = [p for p in picked if not p.get("front")]
+            if not back:
+                break
+            picked.remove(min(back, key=lambda p: p.get("rank_score", 0)))
+            picked.append(c)
+            chosen.add(id(c))
+            have.append(c)
+
+    if front_max:
+        while True:
+            front = [p for p in picked if p.get("front")]
+            if len(front) <= front_max:
+                break
+            victim = min(front, key=lambda p: p.get("rank_score", 0))
+            pool = [c for c in cands
+                    if not c.get("front") and id(c) not in chosen
+                    and not any(_overlap_near(c, p) for p in picked if p is not victim)]
+            if not pool:
+                break
+            repl = max(pool, key=lambda c: c.get("rank_score", 0))
+            picked.remove(victim)
+            picked.append(repl)
+            chosen.add(id(repl))
     return picked
 
 
@@ -679,7 +817,9 @@ def find_highlights(beats: list[dict], top_k: int = 18,
                     min_dur: float = 4.5, max_dur: float = 20.0,
                     min_keep: int = 15, seed: int | None = None,
                     extra_visual: list[dict] | None = None,
-                    visual_reserve: int = 3, type_quota: int = 1) -> list[dict]:
+                    visual_reserve: int = 3, type_quota: int = 1,
+                    front_eps: int = FRONT_EPS,
+                    front_boost: float = FRONT_BOOST) -> list[dict]:
     """找出 15-20 个高光开头候选。
 
     一段剧情算不算高光，看三件事：
@@ -733,6 +873,7 @@ def find_highlights(beats: list[dict], top_k: int = 18,
                 "score": round(score, 2),
                 "act": round(act, 2),
                 "susp": round(susp, 2),
+                "intim": _intimacy_score(text),
                 "at_end": at_end,
                 "kind": _hook_kind(win, text, susp),
                 "hits": hits[:6],
@@ -763,29 +904,69 @@ def find_highlights(beats: list[dict], top_k: int = 18,
             kept_cands.append(c)
     cands = kept_cands
 
+    # 前 15 集标记：只在「总集数超过 front_eps」时生效，
+    # 短片（≤15 集）不该有一半候选被当成"前段"额外加权
+    ep_total = len({c["ep"] for c in cands}) or 1
+    front_active = front_eps > 0 and ep_total > front_eps
+    if front_active:
+        for c in cands:
+            if int(c["ep"]) <= front_eps:
+                c["front"] = True
+
     # 抖动只作用在排序分上，且只在同档内小幅波动；展示分 score 保持原义
+    # 打巴掌 / 吻戏 / 亲密接触再给一档小加成：这类节点是留人的主力
+    def _hot(c: dict) -> bool:
+        return (c.get("subtype") in ("slap", "kiss")
+                or float(c.get("intim", 0.0)) >= 0.5)
+
     if seed:
         rng = random.Random(int(seed) & 0xFFFFFFFF)
         for c in cands:
-            c["_eff"] = c["rank_score"] * (1.0 + rng.uniform(-0.08, 0.08))
+            base = c["rank_score"] * (front_boost if c.get("front") else 1.0)
+            if _hot(c):
+                base *= 1.05
+            c["_eff"] = base * (1.0 + rng.uniform(-0.08, 0.08))
     else:
         for c in cands:
-            c["_eff"] = c["rank_score"]
+            base = c["rank_score"] * (front_boost if c.get("front") else 1.0)
+            if _hot(c):
+                base *= 1.05
+            c["_eff"] = base
     cands.sort(key=lambda c: (-c["_eff"], c["g0"]))
 
     def pick(want: int, per_ep: int, gap: float) -> list[dict]:
         picked: list[dict] = []
         cnt: dict[int, int] = {}
-        for c in cands:
-            if len(picked) >= want:
-                break
-            if cnt.get(c["ep"], 0) >= per_ep:
-                continue
-            if any(c["g0"] < p["g1"] + gap and p["g0"] < c["g1"] + gap
-                   for p in picked):
-                continue
+        front_n = 0
+        # 前段最多占八成：加密是"更密"，不是"只有前段"
+        front_limit = max(1, int(round(want * FRONT_SHARE))) if front_active else want
+        # 前段保底：先按分数从前 15 集挑够 45%，再拿其余名额和全剧比。
+        # 否则前段好候选会被后段更炸的段落整体压掉，"前 15 集密集"就落不了地。
+        front_min = min(front_limit, max(1, int(round(want * 0.45)))) if front_active else 0
+
+        def add(c: dict) -> bool:
+            nonlocal front_n
+            if cnt.get(c["ep"], 0) >= (per_ep + 1 if c.get("front") else per_ep):
+                return False
+            if c.get("front") and front_n >= front_limit:
+                return False
+            if any(c["g0"] < p["g1"] + gap and p["g0"] < c["g1"] + gap for p in picked):
+                return False
             picked.append(c)
             cnt[c["ep"]] = cnt.get(c["ep"], 0) + 1
+            if c.get("front"):
+                front_n += 1
+            return True
+
+        for c in cands:                       # 第一轮：只补前段，补到保底数
+            if len(picked) >= front_min:
+                break
+            if c.get("front"):
+                add(c)
+        for c in cands:                       # 第二轮：全体按分数补齐
+            if len(picked) >= want:
+                break
+            add(c)
         return picked
 
     # 一级级放宽，直到够数。先"铺开"，再"堆密"——宁可每集一条也不要把 18 条挤在两集里
@@ -801,6 +982,10 @@ def find_highlights(beats: list[dict], top_k: int = 18,
     picked = cap_visual(picked, cands, goal, min(visual_reserve, goal))
     # 配额放最后一道：去重补位后仍要守住每类上下限，且补入时不再引入近重复
     picked = apply_type_quotas(picked, cands, goal, min_per_type=type_quota)
+    # 前段密度是硬要求，放在配额之后兜底（配额补位会按分数把前段挤掉）
+    picked = ensure_front(picked, cands, goal,
+                          max(1, int(round(goal * FRONT_MIN_SHARE))) if front_active else 0,
+                          int(round(goal * FRONT_SHARE)) if front_active else None)
     picked = interleave_types(picked)                  # 最后按类型轮转，避免同类霸榜
     for i, p in enumerate(picked):
         for k in ("_eff", "_v", "_a", "_burst", "_vscore"):
@@ -809,7 +994,7 @@ def find_highlights(beats: list[dict], top_k: int = 18,
     return picked
 
 
-def find_endings(beats: list[dict], total: float, top_k: int = 5,
+def find_endings(beats: list[dict], total: float, top_k: int = 8,
                  min_dur: float = 4.0, max_dur: float = 18.0) -> list[dict]:
     """在剧情后段找「结尾钩子」候选。
 
@@ -893,10 +1078,17 @@ def analyze(proj: dict, seed: int | None = None) -> dict:
     total = proj["total"]
     # 钩子池的随机种子跟着项目走：项目里存了就每次一致，没有（老项目）就保持原来的确定性排序
     sd = proj.get("hook_seed") if seed is None else seed
+    hl = find_highlights(beats, top_k=24, min_keep=15, seed=sd,
+                         extra_visual=visual)
     return {
         "beats": beats,
-        "highlights": find_highlights(beats, top_k=18, min_keep=15, seed=sd,
-                                      extra_visual=visual),
+        "highlights": hl,
+        "hook_meta": {
+            "front_eps": FRONT_EPS,
+            "front_count": sum(1 for c in hl if c.get("front")),
+            "eps": len(proj["episodes"]),
+            "boost": FRONT_BOOST,
+        },
         "acts": len(acts),
         "visual_cands": len(visual),
         "endings": find_endings(beats, total),

@@ -1,0 +1,157 @@
+{
+  "checks": [
+    {
+      "name": "「他吻了她」亲密度 0.6",
+      "ok": true,
+      "detail": "0.6"
+    },
+    {
+      "name": "「他吻了她」子标签 kiss",
+      "ok": true,
+      "detail": "kiss"
+    },
+    {
+      "name": "「你凭什么亲我」亲密度 0.6",
+      "ok": true,
+      "detail": "0.6"
+    },
+    {
+      "name": "「你凭什么亲我」子标签 kiss",
+      "ok": true,
+      "detail": "kiss"
+    },
+    {
+      "name": "「她扑进他怀里」亲密度 0.6",
+      "ok": true,
+      "detail": "0.6"
+    },
+    {
+      "name": "「她扑进他怀里」子标签 intimate",
+      "ok": true,
+      "detail": "intimate"
+    },
+    {
+      "name": "「抱住我，别松手」亲密度 0.6",
+      "ok": true,
+      "detail": "0.6"
+    },
+    {
+      "name": "「抱住我，别松手」子标签 intimate",
+      "ok": true,
+      "detail": "intimate"
+    },
+    {
+      "name": "「他抬手就是一巴掌」亲密度 0.0",
+      "ok": true,
+      "detail": "0.0"
+    },
+    {
+      "name": "「他抬手就是一巴掌」子标签 slap",
+      "ok": true,
+      "detail": "slap"
+    },
+    {
+      "name": "「She kissed him softly」亲密度 0.6",
+      "ok": true,
+      "detail": "0.6"
+    },
+    {
+      "name": "「She kissed him softly」子标签 kiss",
+      "ok": true,
+      "detail": "kiss"
+    },
+    {
+      "name": "不误伤「抱歉我来晚了」",
+      "ok": true,
+      "detail": "0.0"
+    },
+    {
+      "name": "不误伤「亲妈也不会这样」",
+      "ok": true,
+      "detail": "0.0"
+    },
+    {
+      "name": "不误伤「我去睡觉了」",
+      "ok": true,
+      "detail": "0.0"
+    },
+    {
+      "name": "不误伤「他抱着胳膊站着」",
+      "ok": true,
+      "detail": "0.18"
+    },
+    {
+      "name": "候选数量不超过 top_k",
+      "ok": true,
+      "detail": "24"
+    },
+    {
+      "name": "前 15 集至少 11 条",
+      "ok": true,
+      "detail": "19/24"
+    },
+    {
+      "name": "前 15 集不超过 19 条（不挤干净后段）",
+      "ok": true,
+      "detail": "19/24"
+    },
+    {
+      "name": "后段仍有候选",
+      "ok": true,
+      "detail": "5"
+    },
+    {
+      "name": "≤15 集不启用前段加密",
+      "ok": true,
+      "detail": "不该有 front 标记"
+    },
+    {
+      "name": "前段台词偏弱时仍保住密度",
+      "ok": true,
+      "detail": "19"
+    },
+    {
+      "name": "候选里出现亲密接触类型",
+      "ok": true,
+      "detail": "['dialog', 'intimacy', 'performance']"
+    },
+    {
+      "name": "有 kiss 子标签",
+      "ok": true,
+      "detail": "['intimate', 'kiss', 'slap']"
+    },
+    {
+      "name": "有 slap 子标签",
+      "ok": true,
+      "detail": "['intimate', 'kiss', 'slap']"
+    },
+    {
+      "name": "每个候选都有 subtype 字段",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "未知类型不会崩",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "结尾候选最多 8 个",
+      "ok": true,
+      "detail": "8"
+    },
+    {
+      "name": "结尾候选都在剧终区",
+      "ok": true,
+      "detail": "越界"
+    },
+    {
+      "name": "同样输入两次结果一致",
+      "ok": true,
+      "detail": "[1372.0, 224.0, 55.0] / [1372.0, 224.0, 55.0]"
+    }
+  ],
+  "total": 30,
+  "failed": 0,
+  "time": "2026-11-10 16:32:12"
+}
