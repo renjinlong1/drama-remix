@@ -219,8 +219,8 @@
 
       <div class="cb scroll tabpane" id="paneHook" hidden>
         <div class="panehead">
-          <span class="hint">从下方候选里挑一个，或直接不设钩子</span>
-          <button class="btn xs ghost" id="btnClearHook">不用钩子</button>
+          <span class="hint">从下方候选里挑一个（再点一次可取消），或直接不设钩子</span>
+          <button class="btn xs ghost" id="btnClearHook" title="清空已选开头，回到第 1 集开头顺剪">取消选择</button>
         </div>
         <div class="hookbox" id="hookBox">
           <div class="empty sm">还没设开头钩子</div>
@@ -294,6 +294,8 @@
         <button class="btn wide ghost ppbtn" id="btnPreviewOut"
           title="按当前方案把成片的每一段原片按顺序播一遍：第一帧、每个切点、结尾停的位置都和出片完全一致（不转码，点开就能看）">预览成品（不出片）</button>
         <button class="btn wide primary" id="btnRender">开始顺剪出片</button>
+        <button class="btn wide ghost" id="btnShowOut" hidden
+          title="在弹窗里看成片预览：不再占用右侧设置区，出片数量与保存位置始终可见">查看本批成片</button>
         <div class="brow cntrow">
           <span class="blab">出片数量</span>
           <div class="seg" id="bAlloc">
@@ -307,20 +309,20 @@
         <div class="prog"><i id="progBar"></i></div>
         <div class="pmsg" id="pmsg">等待开始</div>
         <details class="expopts">
-          <summary>保存位置等设置</summary>
+          <summary>保存位置 / 出片设置</summary>
           <div class="expbody">
             <div class="brow">
               <input id="bDir" class="input" spellcheck="false"
                      placeholder="留空 = 项目 output 文件夹" title="成片保存到哪个文件夹">
-              <button class="btn xs ghost" id="btnPickDir">选文件夹</button>
-              <button class="btn xs ghost" id="btnOpenDir" hidden>打开</button>
+              <button type="button" class="btn xs ghost" id="btnPickDir"
+                title="打开文件夹选择器，选一个保存成片的目录">选文件夹</button>
+              <button type="button" class="btn xs ghost" id="btnOpenDir" hidden>打开</button>
             </div>
             <label class="chk xs" title="默认在所选文件夹里建一个「剧名_时间」子文件夹，多批不混">
               <input type="checkbox" id="bFlat">直接放进所选文件夹（不建子文件夹）
             </label>
           </div>
         </details>
-        <div class="out" id="out"></div>
       </div>
     </section>
   </aside>
@@ -357,6 +359,20 @@
     <div class="dirfoot">
       <span class="hint" id="dirHint">进入文件夹后点「选这个」</span>
       <button class="btn" id="dirOk">选这个</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="outModal">
+  <div class="mbox outbox">
+    <div class="mh">
+      <h3>本批成片</h3>
+      <button class="icobtn" id="outClose">×</button>
+    </div>
+    <div class="mb outmb"><div class="out" id="out"></div></div>
+    <div class="pvfoot">
+      <span class="hint">成片已保存到本地文件夹，播放器里看到的就是最终文件</span>
+      <button class="btn sm ghost" id="outOpenDir">打开文件夹</button>
     </div>
   </div>
 </div>

@@ -396,6 +396,11 @@ select.input{cursor:pointer}
   opacity:0;transition:.15s;z-index:3;border:1px solid rgba(255,255,255,.08)}
 .hook:hover .hdel{opacity:1}
 .hdel:hover{background:#c0483f;color:#fff;border-color:#c0483f}
+/* 已选中的开头：卡片上常驻一个「取消选择」，不用去别处找 */
+.hook .hx{position:absolute;left:8px;top:28px;z-index:4;font-style:normal;font-size:10px;
+  line-height:16px;height:16px;padding:0 7px;border-radius:4px;white-space:nowrap;cursor:pointer;
+  background:rgba(232,183,84,.16);color:var(--hook);border:1px solid rgba(232,183,84,.45)}
+.hook .hx:hover{background:var(--hook);color:#1a1206;border-color:var(--hook)}
 .addform{display:flex;gap:6px;padding:9px 12px 0;align-items:center}
 .addform[hidden]{display:none}
 .addform .input{height:29px;font-size:12px;min-width:0}
@@ -426,8 +431,16 @@ select.input{cursor:pointer}
 /* ── 右栏参数区页签（顺剪设置 / 开头钩子 / 包装） ── */
 .col.right > .card.rparam{flex:0 1 auto;min-height:min(384px,46%);max-height:calc(100% - 240px)}
 .col.right > .card:last-child{flex:1 1 auto;min-height:221px}
-.col.right > .card:last-child > .cb{min-height:0}
-.out{flex:1 1 auto;min-height:40px;overflow-y:auto;padding-right:2px}
+/* 出片卡：每一行都固定高度，窗口矮时整块滚动，绝不把「出片数量」压成一条线 */
+.col.right > .card:last-child > .cb{min-height:0;overflow-y:auto;overflow-x:hidden}
+.col.right > .card:last-child > .cb::-webkit-scrollbar{width:6px}
+.col.right > .card:last-child > .cb::-webkit-scrollbar-thumb{background:#2b3446;border-radius:3px}
+.col.right > .card:last-child > .cb > *{flex:0 0 auto}
+/* 成片预览改成弹窗，不再占出片卡的纵向空间 */
+.out{padding-right:2px}
+.outbox{width:min(560px,92vw)}
+.outmb{padding:12px 14px}
+#out{max-height:min(60vh,520px);overflow-y:auto}
 .ch.rtabs{padding:0 8px;gap:2px;flex:none}
 .rtab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
   padding:0 11px;height:41px;font-size:12.5px;font-weight:500;color:var(--dim);

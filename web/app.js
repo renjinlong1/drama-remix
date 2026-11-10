@@ -13,7 +13,7 @@ const S = {
   batch: {}, batchEnd: {}, bendCands: {}, hkHide: new Set(), hkAdd: [], hkFilter: 'all',
   hkPrefs: { enabled: {}, weight: {} },
   hkShift: {}, endShift: {},
-  batchAlloc: 'total', batchTotal: 20, outdir: '',
+  batchAlloc: 'total', batchTotal: 20, outdir: '', outShown: '',
   target: 360, lead: 1, tailMode: 'auto', tailFixed: 2, efVideoDur: 0, jobTimer: null, saveTimer: null,
 };
 
@@ -174,6 +174,9 @@ function applyProject(d) {
   S.plan = null; S.win = new Set(); S.drop = new Set();
   S.hook = null; S.endhook = null; S.batch = {}; S.batchEnd = {}; S.bendCands = {};
   S.lastDir = '';
+  S.outShown = '';
+  $('#out').innerHTML = '';
+  $('#btnShowOut').hidden = true;
   S.hkHide = new Set(); S.hkAdd = []; S.hkFilter = 'all';
   S.hkShift = {}; S.endShift = {};
   loadHkEdits();
@@ -867,7 +870,7 @@ function renderHooks() {
   box.innerHTML = shown.map((h, i) => {
     const gk = hkId(h);
     const n = S.batch[gk] ? S.batch[gk].count : 0;
-    const on = S.hook && Math.abs(S.hook.g0 - h.g0) < 0.15;
+    const on = hookSelected(h);
     const mv = Number(h.shift || 0);
     const cls = 'hook' + (on ? ' on' : '') + (n ? ' batched' : '') + (h.manual ? ' man' : '') +
       (Math.abs(mv) > 0.01 ? ' mvd' : '');
@@ -879,6 +882,7 @@ function renderHooks() {
       '<i class="hdel" title="从候选里删除">✕</i>' +
       '<i class="hi-ico" title="为什么算高光（证据与信号）">?</i>' +
       '<span class="hkind ' + hookKindClass(h) + '">' + esc(kind) + '</span>' +
+      (on ? '<i class="hx" title="取消选择这个开头，回到默认开头">取消选择</i>' : '') +
       '<div class="hmv">' +
         '<i class="mvl" title="前移 0.5 秒（按住 Shift 挪 2 秒）">‹</i>' +
         '<i class="mvr" title="后移 0.5 秒（按住 Shift 挪 2 秒）">›</i></div>' +
@@ -925,6 +929,13 @@ function renderHooks() {
     el.onclick = (e) => {
       e.stopPropagation();
       pvOpen(shown[Number(el.parentElement.dataset.i)], false);
+    };
+  });
+  $$('#hooks .hx').forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      clearHook();
+      toast('已取消选择，回到默认开头');
     };
   });
   $$('#hooks .hdel').forEach((el) => {
@@ -1490,7 +1501,30 @@ function addManualHook() {
   toast('已加入候选并设为当前开头');
 }
 
+/* 当前选中的是不是这张候选：g0 相同还不够，集号也要一致，避免跨集同秒误判 */
+function hookSelected(h) {
+  if (!S.hook || !h) return false;
+  if (S.hook._k && hkId(h) === S.hook._k) return true;
+  return h.ep === S.hook.ep && Math.abs((h.g0 || 0) - (S.hook.g0 || 0)) < 0.15;
+}
+
+/* 取消选择：清空开头钩子，回到「第 1 集开头顺剪」 */
+function clearHook(silent) {
+  if (!S.hook) return;
+  S.hook = null;
+  renderHooks();
+  renderHookBox();
+  draw();
+  if (!silent) makePlan();
+}
+
 function selectHook(h, silent) {
+  // 再点一次已选中的候选 = 取消选择（卡片上的「取消选择」按钮同一套逻辑）
+  if (hookSelected(h)) {
+    clearHook(silent);
+    if (!silent) toast('已取消选择，回到默认开头');
+    return;
+  }
   S.hook = { g0: h.g0, g1: h.g1, ep: h.ep, text: h.text, dur: h.dur, _k: hkId(h) };
   renderHooks();
   renderHookBox();
@@ -1592,7 +1626,7 @@ function selectEnd(e2, silent) {
 function renderHookBox() {
   const box = $('#hookBox');
   if (!S.hook) {
-    box.innerHTML = '<div class="empty sm">当前不使用开头钩子，直接从第 1 集开头顺剪</div>';
+    box.innerHTML = '<div class="empty sm">当前不使用开头钩子，直接从第 1 集开头顺剪。在下方候选卡片上点一下即可重新选择</div>';
     syncTabDots();
     return;
   }
@@ -2320,6 +2354,7 @@ $('#btnRender').onclick = async () => {
   const batch = list.length > 0;
   if (!batch && !S.plan) { toast('先生成顺剪方案', true); return; }
   $('#out').innerHTML = '';
+  $('#btnShowOut').hidden = true;
   $('#btnRender').disabled = true;
   const base = Object.assign(packOpts(), {
     logo: S.logo, logo_pos: $('#logoPos').value,
@@ -2359,6 +2394,8 @@ $('#btnRender').onclick = async () => {
             (r.end_spec ? ' · <b class="endspec">指定结尾</b>' : '') + ' · ' + esc(r.end_reason || '') +
           '</span><span>' + r.size_mb + ' MB</span></div>').join('') + errBlock;
         if (res.dir) showOutDir(res.dir);
+        $('#btnShowOut').hidden = false;
+        $('#btnShowOut').textContent = '查看本批成片（' + res.results.length + ' 条）';
         toast('批量完成：' + res.count + ' / ' + expect + ' 条成片，已存到本地文件夹');
       });
     } else {
@@ -2371,6 +2408,8 @@ $('#btnRender').onclick = async () => {
           '<div class="oi"><span>' + fmt(res.duration) + ' · ' + res.width + '×' + res.height + '</span>' +
           '<span>' + res.size_mb + ' MB</span></div>';
         if (res.dir) showOutDir(res.dir);
+        $('#btnShowOut').hidden = false;
+        $('#btnShowOut').textContent = '查看本批成片';
         toast('成片完成：' + fmt(res.duration));
       });
     }
@@ -2383,6 +2422,7 @@ $('#btnRender').onclick = async () => {
 /* 成片落地目录：显示出来 + 一键打开资源管理器 */
 function showOutDir(dir) {
   S.lastDir = dir;
+  S.outShown = dir;
   $('#btnOpenDir').hidden = false;
   const box = document.createElement('div');
   box.className = 'bout';
@@ -2393,12 +2433,32 @@ function showOutDir(dir) {
   $('#out').appendChild(box);
 }
 
+/* ── 成片预览弹窗（不再挂在出片卡里，避免把出片数量/保存位置挤扁） ── */
+function outModalOpen() {
+  $('#outModal').classList.add('on');
+}
+function outModalClose() {
+  $('#outModal').classList.remove('on');
+  $$('#out video').forEach((v) => { try { v.pause(); } catch (e) { /* 忽略 */ } });
+}
+$('#btnShowOut').onclick = outModalOpen;
+$('#outClose').onclick = outModalClose;
+$('#outModal').onclick = (e) => { if (e.target === $('#outModal')) outModalClose(); };
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('#outModal').classList.contains('on')) outModalClose();
+});
+$('#outOpenDir').onclick = () => {
+  const d = S.outShown || S.outdir || S.lastDir;
+  if (!d) { toast('还没出过片，没有可打开的目录', true); return; }
+  api('/api/reveal', { path: d }).catch((e) => toast(e.message, true));
+};
+
 /* ── 渲染（单条模式已并入上面的 #btnRender） ─────── */
 
 /* ── 其它 ─────────────────────────────────────────── */
 $('#btnScan').onclick = doScan;
-$('#btnImportTop').onclick = () => dirOpen();
-$('#btnPick').onclick = () => dirOpen();
+$('#btnImportTop').onclick = () => openDirPicker();
+$('#btnPick').onclick = () => openDirPicker();
 
 /* ── 内置文件夹浏览器 ─────────────────────────────── */
 const Dir = { cur: '', parent: null, mode: 'import' };
@@ -2409,9 +2469,26 @@ function dirOpen(mode) {
   $('#dirTitle').textContent = out ? '选择成片保存到哪个文件夹' : '选择剧集文件夹';
   $('#dirOk').textContent = out ? '存到这里' : '选这个';
   $('#dirModal').classList.add('on');
-  const last = out ? (S.outdir || localStorage.getItem('dc.outBrowse'))
-                   : (Dir.cur || localStorage.getItem('dc.lastDir'));
+  // 记住的路径只是"上次停留处"：读不到就退回盘符列表，别让弹窗一开就卡死
+  let last = '';
+  try {
+    last = out ? (S.outdir || localStorage.getItem('dc.outBrowse') || '')
+               : (Dir.cur || localStorage.getItem('dc.lastDir') || '');
+  } catch (e) {
+    last = out ? (S.outdir || '') : (Dir.cur || '');
+  }
   dirGo(last || '', { fromLast: !!last });
+}
+
+/* 统一入口：任何一步抛错也要把弹窗打开并给出原因，不能"点了没反应" */
+function openDirPicker(mode) {
+  try {
+    dirOpen(mode);
+  } catch (e) {
+    $('#dirModal').classList.add('on');
+    try { dirGo('', {}); } catch (x) { /* 忽略 */ }
+    toast('文件夹选择器打开失败：' + ((e && e.message) || e), true);
+  }
 }
 
 function dirRenderError(msg, canRoot) {
@@ -2563,7 +2640,19 @@ $('#bTotal').onchange = (e) => {
   try { localStorage.setItem('dc.batchTotal', String(t)); } catch (x) { /* 忽略 */ }
   renderBatchBar();
 };
-$('#btnPickDir').onclick = () => dirOpen('out');
+$('#btnPickDir').onclick = () => openDirPicker('out');
+/* 右栏矮的时候出片卡内部会滚动：展开「保存位置」就把它滚进视野，
+   否则按钮可能停在卡片可视区下方，看起来像"点了没反应" */
+(() => {
+  const ex = document.querySelector('.expopts');
+  if (!ex) return;
+  ex.addEventListener('toggle', () => {
+    if (!ex.open) return;
+    setTimeout(() => {
+      try { ex.scrollIntoView({ block: 'nearest' }); } catch (e) { /* 老浏览器忽略 */ }
+    }, 30);
+  });
+})();
 /* 保存目录既能在弹窗里选，也能直接粘贴；清空就回到项目 output */
 function setOutDir(v) {
   S.outdir = String(v || '').trim().replace(/^"|"$/g, '');
@@ -2654,7 +2743,7 @@ $('#hookLead').onchange = (e) => {
   renderHookBox();
   makePlan();
 };
-$('#btnClearHook').onclick = () => { S.hook = null; renderHooks(); renderHookBox(); makePlan(); };
+$('#btnClearHook').onclick = () => { clearHook(); toast('已取消选择，回到默认开头'); };
 
 /* 右栏参数区页签：顺剪设置 / 开头钩子 / 包装（同一张卡内切换，避免挤成一条缝） */
 const RTAB_HINT = { plan: '', hook: '选一个当开头', pack: '角标 / 尾帧 / 模板' };
@@ -2867,7 +2956,7 @@ $('#btnPurgeMiss').onclick = async () => {
 $('#btnNewProj').onclick = () => {
   $('#folder').value = '';
   $('#projName').value = S.ready ? '' : $('#projName').value;
-  dirOpen();
+  openDirPicker();
 };
 
 window.addEventListener('resize', () => { resize(); draw(); });
