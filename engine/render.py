@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import ffmpegx, pack
@@ -16,6 +17,8 @@ from . import project as proj_mod
 
 ROOT = Path(__file__).resolve().parent.parent
 FPS = 30
+# 片段逐段编码是渲染最重的一段；限 2 路并发，别让同时启动的 ffmpeg 把内存顶高
+RENDER_CUT_WORKERS = 2
 
 
 def _even(n: float) -> int:
@@ -108,16 +111,32 @@ def _end_frame_piece(src: str, out: Path, ef_dur: float, w: int, h: int, fit: st
     return out, dur
 
 
+def _cleanup_work(work: Path) -> None:
+    """清掉中间片段。渲染异常时也必须执行，否则 projects/_r* 会一直堆在磁盘上。"""
+    try:
+        for f in work.glob("*"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        work.rmdir()
+    except BaseException:  # noqa: BLE001  删不掉就留给下次启动的 _clean_stale_work
+        pass
+
+
 def render(proj: dict, plan: dict, out_path: str, opts: dict | None = None,
            emit=None) -> dict:
-    opts = opts or {}
     work = Path(proj_mod.PROJ) / ("_r" + str(os.getpid()))
-    # 上一轮的中间文件尽量清掉；沙箱/安全软件可能拦截批量删除，失败也不影响出片
-    try:
-        shutil.rmtree(work, ignore_errors=True)
-    except BaseException:  # noqa: BLE001
-        pass
+    _cleanup_work(work)
     work.mkdir(parents=True, exist_ok=True)
+    try:
+        return _render_impl(proj, plan, out_path, opts, emit, work)
+    finally:
+        _cleanup_work(work)
+
+
+def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) -> dict:
+    opts = opts or {}
 
     w, h = pick_size(proj, opts.get("size", "match"), opts.get("fit", "crop"))
     crf = int(opts.get("crf", 20))
@@ -144,11 +163,21 @@ def render(proj: dict, plan: dict, out_path: str, opts: dict | None = None,
     total = len(segs) + (1 if has_end_frame else 0)
     done = 0
 
-    for k, s in enumerate(segs):
-        pieces.append(_cut(s, proj, work, k, w, h, opts.get("fit", "crop"), crf, preset))
-        done += 1
-        pct = 4 + 60 * done / max(1, total)
-        say(min(64, pct), f"剪辑片段 {k + 1}/{len(segs)} · 第 {s['ep']} 集")
+    fit = opts.get("fit", "crop")
+
+    def cut_one(item):
+        k, s = item
+        return k, _cut(s, proj, work, k, w, h, fit, crf, preset)
+
+    cut_results: dict[int, Path] = {}
+    with ThreadPoolExecutor(max_workers=RENDER_CUT_WORKERS) as pool:
+        for k, path in pool.map(cut_one, enumerate(segs)):
+            cut_results[k] = path
+            done += 1
+            pct = 4 + 60 * done / max(1, total)
+            say(min(64, pct), f"剪辑片段 {k + 1}/{len(segs)} · 第 {segs[k]['ep']} 集")
+    # pool.map 按输入顺序产出，这里再按编号显式取一次，保证拼接顺序稳定
+    pieces.extend(cut_results[k] for k in range(len(segs)))
 
     if has_end_frame:
         ef_piece, ef_real = _end_frame_piece(end_frame_path, work / "c998.mp4", ef_dur,
@@ -203,12 +232,15 @@ def render(proj: dict, plan: dict, out_path: str, opts: dict | None = None,
         fc += f"[{cur}][il{layers}]overlay={xy}:format=auto,format=yuv420p[v]"
         layers += 1
     if layers:
-        args += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a:0"]
+        args += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a:0",
+                 "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+                 "-g", str(FPS * 2), "-pix_fmt", "yuv420p",
+                 "-profile:v", "high", "-level", "4.1"]
     else:
-        args += ["-map", "0:v:0", "-map", "0:a:0"]
+        # 没有角标 / 模板时画面不需要任何改动：直接拷贝已编码片段，只重编码音频
+        # 做 loudnorm。省掉一次全片二次转码，时长/分辨率/帧率不变，还少一次画质损失。
+        args += ["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy"]
     args += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-             "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-             "-g", str(FPS * 2), "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
              "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
              "-movflags", "+faststart", out_path]
     say(78, "叠加模板角标与音量归一")
@@ -218,17 +250,6 @@ def render(proj: dict, plan: dict, out_path: str, opts: dict | None = None,
         info = ffmpegx.probe(out_path)
     except Exception:  # noqa: BLE001  成片已生成，探测失败只影响返回的时长信息
         info = {"duration": 0.0, "width": 0, "height": 0}
-    # 中间文件清理：删不掉就留着（下次渲染开头的 rmtree 会再试），绝不能让清理失败拖死出片
-    try:
-        for f in work.glob("*"):
-            try:
-                f.unlink()
-            except OSError:
-                pass
-        work.rmdir()
-    except BaseException:  # noqa: BLE001
-        pass
-
     say(100, "成片完成")
     return {
         "video": out_path,

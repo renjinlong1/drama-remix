@@ -1,0 +1,700 @@
+{
+  "tag": "optimized",
+  "time": "2026-11-10 12:23:46",
+  "repeat": 3,
+  "cases": 9,
+  "render_cases": [
+    "h264_360x640_6s"
+  ],
+  "summary": {
+    "h264_360x640_6s": {
+      "runs": 3,
+      "total_s_avg": 4.477,
+      "wall_s_avg": 4.623,
+      "peak_rss_mb_avg": 31.44,
+      "peak_rss_mb_max": 31.49,
+      "rss_mb_avg": 31.48,
+      "stages_avg": {
+        "probe": 0.116,
+        "scan": 0.42,
+        "rescan": 0.003,
+        "vision": 0.242,
+        "analyze": 0.002,
+        "plan": 0.001,
+        "render": 3.694
+      },
+      "fingerprints": [
+        "cdf6dd0723a00264"
+      ],
+      "stable": true
+    },
+    "h264_720x1280_15s": {
+      "runs": 3,
+      "total_s_avg": 0.994,
+      "wall_s_avg": 1.133,
+      "peak_rss_mb_avg": 27.25,
+      "peak_rss_mb_max": 27.27,
+      "rss_mb_avg": 27.25,
+      "stages_avg": {
+        "probe": 0.118,
+        "scan": 0.428,
+        "rescan": 0.003,
+        "vision": 0.442,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "fingerprints": [
+        "65bfaecb0462538e"
+      ],
+      "stable": true
+    },
+    "h264_720x1280_45s": {
+      "runs": 3,
+      "total_s_avg": 1.521,
+      "wall_s_avg": 1.66,
+      "peak_rss_mb_avg": 27.72,
+      "peak_rss_mb_max": 27.77,
+      "rss_mb_avg": 27.73,
+      "stages_avg": {
+        "probe": 0.117,
+        "scan": 0.427,
+        "rescan": 0.003,
+        "vision": 0.966,
+        "analyze": 0.008,
+        "plan": 0.0
+      },
+      "fingerprints": [
+        "ecf6b9837661a890"
+      ],
+      "stable": true
+    },
+    "mkv_720x1280_15s": {
+      "runs": 3,
+      "total_s_avg": 1.032,
+      "wall_s_avg": 1.167,
+      "peak_rss_mb_avg": 27.2,
+      "peak_rss_mb_max": 27.2,
+      "rss_mb_avg": 27.21,
+      "stages_avg": {
+        "probe": 0.12,
+        "scan": 0.459,
+        "rescan": 0.003,
+        "vision": 0.445,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "fingerprints": [
+        "4df60f6b45b03c8c"
+      ],
+      "stable": true
+    },
+    "mov_360x640_8s": {
+      "runs": 3,
+      "total_s_avg": 0.806,
+      "wall_s_avg": 0.94,
+      "peak_rss_mb_avg": 27.05,
+      "peak_rss_mb_max": 27.17,
+      "rss_mb_avg": 27.08,
+      "stages_avg": {
+        "probe": 0.116,
+        "scan": 0.418,
+        "rescan": 0.003,
+        "vision": 0.266,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "fingerprints": [
+        "2ad1521a9c6f462c"
+      ],
+      "stable": true
+    },
+    "avi_360x640_8s": {
+      "runs": 3,
+      "total_s_avg": 0.79,
+      "wall_s_avg": 0.927,
+      "peak_rss_mb_avg": 27.21,
+      "peak_rss_mb_max": 27.31,
+      "rss_mb_avg": 27.24,
+      "stages_avg": {
+        "probe": 0.114,
+        "scan": 0.41,
+        "rescan": 0.003,
+        "vision": 0.26,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "fingerprints": [
+        "8263d5808624c94f"
+      ],
+      "stable": true
+    },
+    "webm_360x640_8s": {
+      "runs": 3,
+      "total_s_avg": 0.799,
+      "wall_s_avg": 0.937,
+      "peak_rss_mb_avg": 27.14,
+      "peak_rss_mb_max": 27.2,
+      "rss_mb_avg": 27.16,
+      "stages_avg": {
+        "probe": 0.113,
+        "scan": 0.401,
+        "rescan": 0.003,
+        "vision": 0.279,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "fingerprints": [
+        "4b66feb0be9ed4c5"
+      ],
+      "stable": true
+    },
+    "h264_1280x720_10s": {
+      "runs": 3,
+      "total_s_avg": 0.901,
+      "wall_s_avg": 1.037,
+      "peak_rss_mb_avg": 27.22,
+      "peak_rss_mb_max": 27.3,
+      "rss_mb_avg": 27.23,
+      "stages_avg": {
+        "probe": 0.117,
+        "scan": 0.427,
+        "rescan": 0.003,
+        "vision": 0.35,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "fingerprints": [
+        "ba0c3e0296d221da"
+      ],
+      "stable": true
+    },
+    "h264_360x640_6s_mute": {
+      "runs": 3,
+      "total_s_avg": 0.706,
+      "wall_s_avg": 0.843,
+      "peak_rss_mb_avg": 27.2,
+      "peak_rss_mb_max": 27.4,
+      "rss_mb_avg": 27.23,
+      "stages_avg": {
+        "probe": 0.113,
+        "scan": 0.409,
+        "rescan": 0.003,
+        "vision": 0.177,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "fingerprints": [
+        "ca071887518367ca"
+      ],
+      "stable": true
+    }
+  },
+  "rows": [
+    {
+      "case": "h264_360x640_6s",
+      "stages": {
+        "probe": 0.116,
+        "scan": 0.421,
+        "rescan": 0.003,
+        "vision": 0.244,
+        "analyze": 0.002,
+        "plan": 0.001,
+        "render": 3.698
+      },
+      "peak_rss_mb": 31.49,
+      "rss_mb": 31.53,
+      "fingerprint": "cdf6dd0723a00264",
+      "error": "",
+      "render": {
+        "duration": 42.08,
+        "size_kb": 7303.9
+      },
+      "total_s": 4.485,
+      "repeat": 0,
+      "wall_s": 4.64
+    },
+    {
+      "case": "h264_720x1280_15s",
+      "stages": {
+        "probe": 0.119,
+        "scan": 0.425,
+        "rescan": 0.003,
+        "vision": 0.443,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.24,
+      "rss_mb": 27.24,
+      "fingerprint": "65bfaecb0462538e",
+      "error": "",
+      "total_s": 0.994,
+      "repeat": 0,
+      "wall_s": 1.13
+    },
+    {
+      "case": "h264_720x1280_45s",
+      "stages": {
+        "probe": 0.119,
+        "scan": 0.423,
+        "rescan": 0.003,
+        "vision": 0.964,
+        "analyze": 0.008,
+        "plan": 0.0
+      },
+      "peak_rss_mb": 27.77,
+      "rss_mb": 27.77,
+      "fingerprint": "ecf6b9837661a890",
+      "error": "",
+      "total_s": 1.517,
+      "repeat": 0,
+      "wall_s": 1.66
+    },
+    {
+      "case": "mkv_720x1280_15s",
+      "stages": {
+        "probe": 0.119,
+        "scan": 0.457,
+        "rescan": 0.003,
+        "vision": 0.443,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.2,
+      "rss_mb": 27.2,
+      "fingerprint": "4df60f6b45b03c8c",
+      "error": "",
+      "total_s": 1.026,
+      "repeat": 0,
+      "wall_s": 1.16
+    },
+    {
+      "case": "mov_360x640_8s",
+      "stages": {
+        "probe": 0.116,
+        "scan": 0.418,
+        "rescan": 0.003,
+        "vision": 0.265,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 26.84,
+      "rss_mb": 26.88,
+      "fingerprint": "2ad1521a9c6f462c",
+      "error": "",
+      "total_s": 0.805,
+      "repeat": 0,
+      "wall_s": 0.94
+    },
+    {
+      "case": "avi_360x640_8s",
+      "stages": {
+        "probe": 0.114,
+        "scan": 0.411,
+        "rescan": 0.003,
+        "vision": 0.26,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.1,
+      "rss_mb": 27.14,
+      "fingerprint": "8263d5808624c94f",
+      "error": "",
+      "total_s": 0.791,
+      "repeat": 0,
+      "wall_s": 0.93
+    },
+    {
+      "case": "webm_360x640_8s",
+      "stages": {
+        "probe": 0.111,
+        "scan": 0.398,
+        "rescan": 0.003,
+        "vision": 0.276,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.14,
+      "rss_mb": 27.14,
+      "fingerprint": "4b66feb0be9ed4c5",
+      "error": "",
+      "total_s": 0.791,
+      "repeat": 0,
+      "wall_s": 0.93
+    },
+    {
+      "case": "h264_1280x720_10s",
+      "stages": {
+        "probe": 0.118,
+        "scan": 0.426,
+        "rescan": 0.003,
+        "vision": 0.349,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.3,
+      "rss_mb": 27.3,
+      "fingerprint": "ba0c3e0296d221da",
+      "error": "",
+      "total_s": 0.9,
+      "repeat": 0,
+      "wall_s": 1.04
+    },
+    {
+      "case": "h264_360x640_6s_mute",
+      "stages": {
+        "probe": 0.115,
+        "scan": 0.407,
+        "rescan": 0.003,
+        "vision": 0.177,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.05,
+      "rss_mb": 27.09,
+      "fingerprint": "ca071887518367ca",
+      "error": "",
+      "total_s": 0.705,
+      "repeat": 0,
+      "wall_s": 0.85
+    },
+    {
+      "case": "h264_360x640_6s",
+      "stages": {
+        "probe": 0.116,
+        "scan": 0.419,
+        "rescan": 0.003,
+        "vision": 0.242,
+        "analyze": 0.002,
+        "plan": 0.001,
+        "render": 3.683
+      },
+      "peak_rss_mb": 31.41,
+      "rss_mb": 31.45,
+      "fingerprint": "cdf6dd0723a00264",
+      "error": "",
+      "render": {
+        "duration": 42.08,
+        "size_kb": 7303.9
+      },
+      "total_s": 4.466,
+      "repeat": 1,
+      "wall_s": 4.61
+    },
+    {
+      "case": "h264_720x1280_15s",
+      "stages": {
+        "probe": 0.118,
+        "scan": 0.43,
+        "rescan": 0.003,
+        "vision": 0.445,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.27,
+      "rss_mb": 27.27,
+      "fingerprint": "65bfaecb0462538e",
+      "error": "",
+      "total_s": 1.0,
+      "repeat": 1,
+      "wall_s": 1.14
+    },
+    {
+      "case": "h264_720x1280_45s",
+      "stages": {
+        "probe": 0.117,
+        "scan": 0.427,
+        "rescan": 0.003,
+        "vision": 0.963,
+        "analyze": 0.008,
+        "plan": 0.0
+      },
+      "peak_rss_mb": 27.74,
+      "rss_mb": 27.77,
+      "fingerprint": "ecf6b9837661a890",
+      "error": "",
+      "total_s": 1.518,
+      "repeat": 1,
+      "wall_s": 1.65
+    },
+    {
+      "case": "mkv_720x1280_15s",
+      "stages": {
+        "probe": 0.119,
+        "scan": 0.46,
+        "rescan": 0.003,
+        "vision": 0.446,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.2,
+      "rss_mb": 27.21,
+      "fingerprint": "4df60f6b45b03c8c",
+      "error": "",
+      "total_s": 1.032,
+      "repeat": 1,
+      "wall_s": 1.16
+    },
+    {
+      "case": "mov_360x640_8s",
+      "stages": {
+        "probe": 0.116,
+        "scan": 0.421,
+        "rescan": 0.003,
+        "vision": 0.266,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.14,
+      "rss_mb": 27.18,
+      "fingerprint": "2ad1521a9c6f462c",
+      "error": "",
+      "total_s": 0.809,
+      "repeat": 1,
+      "wall_s": 0.94
+    },
+    {
+      "case": "avi_360x640_8s",
+      "stages": {
+        "probe": 0.112,
+        "scan": 0.409,
+        "rescan": 0.003,
+        "vision": 0.259,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.31,
+      "rss_mb": 27.32,
+      "fingerprint": "8263d5808624c94f",
+      "error": "",
+      "total_s": 0.786,
+      "repeat": 1,
+      "wall_s": 0.92
+    },
+    {
+      "case": "webm_360x640_8s",
+      "stages": {
+        "probe": 0.113,
+        "scan": 0.403,
+        "rescan": 0.003,
+        "vision": 0.275,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.08,
+      "rss_mb": 27.11,
+      "fingerprint": "4b66feb0be9ed4c5",
+      "error": "",
+      "total_s": 0.797,
+      "repeat": 1,
+      "wall_s": 0.93
+    },
+    {
+      "case": "h264_1280x720_10s",
+      "stages": {
+        "probe": 0.118,
+        "scan": 0.43,
+        "rescan": 0.003,
+        "vision": 0.353,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.12,
+      "rss_mb": 27.14,
+      "fingerprint": "ba0c3e0296d221da",
+      "error": "",
+      "total_s": 0.908,
+      "repeat": 1,
+      "wall_s": 1.04
+    },
+    {
+      "case": "h264_360x640_6s_mute",
+      "stages": {
+        "probe": 0.113,
+        "scan": 0.41,
+        "rescan": 0.003,
+        "vision": 0.176,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.14,
+      "rss_mb": 27.18,
+      "fingerprint": "ca071887518367ca",
+      "error": "",
+      "total_s": 0.705,
+      "repeat": 1,
+      "wall_s": 0.84
+    },
+    {
+      "case": "h264_360x640_6s",
+      "stages": {
+        "probe": 0.115,
+        "scan": 0.419,
+        "rescan": 0.003,
+        "vision": 0.241,
+        "analyze": 0.002,
+        "plan": 0.001,
+        "render": 3.7
+      },
+      "peak_rss_mb": 31.43,
+      "rss_mb": 31.46,
+      "fingerprint": "cdf6dd0723a00264",
+      "error": "",
+      "render": {
+        "duration": 42.08,
+        "size_kb": 7303.9
+      },
+      "total_s": 4.481,
+      "repeat": 2,
+      "wall_s": 4.62
+    },
+    {
+      "case": "h264_720x1280_15s",
+      "stages": {
+        "probe": 0.116,
+        "scan": 0.428,
+        "rescan": 0.003,
+        "vision": 0.438,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.25,
+      "rss_mb": 27.25,
+      "fingerprint": "65bfaecb0462538e",
+      "error": "",
+      "total_s": 0.989,
+      "repeat": 2,
+      "wall_s": 1.13
+    },
+    {
+      "case": "h264_720x1280_45s",
+      "stages": {
+        "probe": 0.116,
+        "scan": 0.43,
+        "rescan": 0.003,
+        "vision": 0.972,
+        "analyze": 0.008,
+        "plan": 0.0
+      },
+      "peak_rss_mb": 27.65,
+      "rss_mb": 27.65,
+      "fingerprint": "ecf6b9837661a890",
+      "error": "",
+      "total_s": 1.529,
+      "repeat": 2,
+      "wall_s": 1.67
+    },
+    {
+      "case": "mkv_720x1280_15s",
+      "stages": {
+        "probe": 0.122,
+        "scan": 0.461,
+        "rescan": 0.003,
+        "vision": 0.447,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.2,
+      "rss_mb": 27.23,
+      "fingerprint": "4df60f6b45b03c8c",
+      "error": "",
+      "total_s": 1.037,
+      "repeat": 2,
+      "wall_s": 1.18
+    },
+    {
+      "case": "mov_360x640_8s",
+      "stages": {
+        "probe": 0.116,
+        "scan": 0.416,
+        "rescan": 0.003,
+        "vision": 0.266,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.17,
+      "rss_mb": 27.17,
+      "fingerprint": "2ad1521a9c6f462c",
+      "error": "",
+      "total_s": 0.804,
+      "repeat": 2,
+      "wall_s": 0.94
+    },
+    {
+      "case": "avi_360x640_8s",
+      "stages": {
+        "probe": 0.115,
+        "scan": 0.411,
+        "rescan": 0.003,
+        "vision": 0.261,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.23,
+      "rss_mb": 27.26,
+      "fingerprint": "8263d5808624c94f",
+      "error": "",
+      "total_s": 0.793,
+      "repeat": 2,
+      "wall_s": 0.93
+    },
+    {
+      "case": "webm_360x640_8s",
+      "stages": {
+        "probe": 0.114,
+        "scan": 0.402,
+        "rescan": 0.003,
+        "vision": 0.287,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.2,
+      "rss_mb": 27.24,
+      "fingerprint": "4b66feb0be9ed4c5",
+      "error": "",
+      "total_s": 0.809,
+      "repeat": 2,
+      "wall_s": 0.95
+    },
+    {
+      "case": "h264_1280x720_10s",
+      "stages": {
+        "probe": 0.116,
+        "scan": 0.424,
+        "rescan": 0.003,
+        "vision": 0.347,
+        "analyze": 0.003,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.24,
+      "rss_mb": 27.26,
+      "fingerprint": "ba0c3e0296d221da",
+      "error": "",
+      "total_s": 0.894,
+      "repeat": 2,
+      "wall_s": 1.03
+    },
+    {
+      "case": "h264_360x640_6s_mute",
+      "stages": {
+        "probe": 0.112,
+        "scan": 0.411,
+        "rescan": 0.003,
+        "vision": 0.178,
+        "analyze": 0.002,
+        "plan": 0.001
+      },
+      "peak_rss_mb": 27.4,
+      "rss_mb": 27.41,
+      "fingerprint": "ca071887518367ca",
+      "error": "",
+      "total_s": 0.707,
+      "repeat": 2,
+      "wall_s": 0.84
+    }
+  ],
+  "temp": {
+    "render_dirs": 0,
+    "render_files": 0,
+    "thumbs": 0
+  }
+}

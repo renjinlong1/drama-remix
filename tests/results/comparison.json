@@ -1,0 +1,539 @@
+{
+  "generated": "2026-11-10 12:24:44",
+  "method": "每用例独立子进程，重复 3 轮取均值；峰值内存取 Windows PeakWorkingSetSize",
+  "baseline_tag": "v2026.11.10-hookui",
+  "optimized": "工作区未提交改动",
+  "cases": 9,
+  "repeat": 3,
+  "summary": {
+    "total_s_all_cases": {
+      "before": 18.385,
+      "after": 12.026,
+      "delta_pct": -34.6
+    },
+    "peak_rss_mb_avg_all_cases": {
+      "before": 36.42,
+      "after": 27.71,
+      "delta_pct": -23.9
+    },
+    "long_video_peak_mb": {
+      "before": 62.61,
+      "after": 27.72,
+      "delta_pct": -55.7
+    },
+    "fingerprints_all_same": true,
+    "stable_all_runs": true
+  },
+  "pipeline_test": {
+    "cases": 9,
+    "passed": 9,
+    "checks": 110,
+    "failed": 0,
+    "guards": [
+      {
+        "name": "渲染失败不残留中间目录",
+        "ok": true,
+        "detail": "0 -> 0"
+      },
+      {
+        "name": "抽帧缓存有上限",
+        "ok": true,
+        "detail": "30 -> 10"
+      }
+    ],
+    "temp_before": {
+      "render_dirs": 0,
+      "render_files": 0,
+      "thumbs": 0
+    },
+    "temp_after": {
+      "render_dirs": 0,
+      "render_files": 0,
+      "thumbs": 0
+    }
+  },
+  "rows": [
+    {
+      "case": "h264_360x640_6s",
+      "total_s": {
+        "before": 6.512,
+        "after": 4.477,
+        "delta_pct": -31.2
+      },
+      "peak_rss_mb": {
+        "before": 32.94,
+        "after": 31.44,
+        "delta_pct": -4.6
+      },
+      "rss_mb": {
+        "before": 32.95,
+        "after": 31.48,
+        "delta_pct": -4.5
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.114,
+          "after": 0.116,
+          "delta_pct": 1.8
+        },
+        "scan": {
+          "before": 0.476,
+          "after": 0.42,
+          "delta_pct": -11.8
+        },
+        "rescan": {
+          "before": 0.471,
+          "after": 0.003,
+          "delta_pct": -99.4
+        },
+        "vision": {
+          "before": 0.249,
+          "after": 0.242,
+          "delta_pct": -2.8
+        },
+        "analyze": {
+          "before": 0.002,
+          "after": 0.002,
+          "delta_pct": 0.0
+        },
+        "plan": {
+          "before": 0.001,
+          "after": 0.001,
+          "delta_pct": 0.0
+        },
+        "render": {
+          "before": 5.199,
+          "after": 3.694,
+          "delta_pct": -28.9
+        }
+      }
+    },
+    {
+      "case": "h264_720x1280_15s",
+      "total_s": {
+        "before": 1.548,
+        "after": 0.994,
+        "delta_pct": -35.8
+      },
+      "peak_rss_mb": {
+        "before": 36.43,
+        "after": 27.25,
+        "delta_pct": -25.2
+      },
+      "rss_mb": {
+        "before": 29.89,
+        "after": 27.25,
+        "delta_pct": -8.8
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.116,
+          "after": 0.118,
+          "delta_pct": 1.7
+        },
+        "scan": {
+          "before": 0.484,
+          "after": 0.428,
+          "delta_pct": -11.6
+        },
+        "rescan": {
+          "before": 0.489,
+          "after": 0.003,
+          "delta_pct": -99.4
+        },
+        "vision": {
+          "before": 0.455,
+          "after": 0.442,
+          "delta_pct": -2.9
+        },
+        "analyze": {
+          "before": 0.003,
+          "after": 0.003,
+          "delta_pct": 0.0
+        },
+        "plan": {
+          "before": 0.001,
+          "after": 0.001,
+          "delta_pct": 0.0
+        }
+      }
+    },
+    {
+      "case": "h264_720x1280_45s",
+      "total_s": {
+        "before": 2.092,
+        "after": 1.521,
+        "delta_pct": -27.3
+      },
+      "peak_rss_mb": {
+        "before": 62.61,
+        "after": 27.72,
+        "delta_pct": -55.7
+      },
+      "rss_mb": {
+        "before": 30.67,
+        "after": 27.73,
+        "delta_pct": -9.6
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.116,
+          "after": 0.117,
+          "delta_pct": 0.9
+        },
+        "scan": {
+          "before": 0.486,
+          "after": 0.427,
+          "delta_pct": -12.1
+        },
+        "rescan": {
+          "before": 0.481,
+          "after": 0.003,
+          "delta_pct": -99.4
+        },
+        "vision": {
+          "before": 1.001,
+          "after": 0.966,
+          "delta_pct": -3.5
+        },
+        "analyze": {
+          "before": 0.008,
+          "after": 0.008,
+          "delta_pct": 0.0
+        },
+        "plan": {
+          "before": 0.0,
+          "after": 0.0,
+          "delta_pct": 0.0
+        }
+      }
+    },
+    {
+      "case": "mkv_720x1280_15s",
+      "total_s": {
+        "before": 1.62,
+        "after": 1.032,
+        "delta_pct": -36.3
+      },
+      "peak_rss_mb": {
+        "before": 36.51,
+        "after": 27.2,
+        "delta_pct": -25.5
+      },
+      "rss_mb": {
+        "before": 30.11,
+        "after": 27.21,
+        "delta_pct": -9.6
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.119,
+          "after": 0.12,
+          "delta_pct": 0.8
+        },
+        "scan": {
+          "before": 0.52,
+          "after": 0.459,
+          "delta_pct": -11.7
+        },
+        "rescan": {
+          "before": 0.515,
+          "after": 0.003,
+          "delta_pct": -99.4
+        },
+        "vision": {
+          "before": 0.462,
+          "after": 0.445,
+          "delta_pct": -3.7
+        },
+        "analyze": {
+          "before": 0.003,
+          "after": 0.003,
+          "delta_pct": 0.0
+        },
+        "plan": {
+          "before": 0.001,
+          "after": 0.001,
+          "delta_pct": 0.0
+        }
+      }
+    },
+    {
+      "case": "mov_360x640_8s",
+      "total_s": {
+        "before": 1.339,
+        "after": 0.806,
+        "delta_pct": -39.8
+      },
+      "peak_rss_mb": {
+        "before": 32.31,
+        "after": 27.05,
+        "delta_pct": -16.3
+      },
+      "rss_mb": {
+        "before": 29.92,
+        "after": 27.08,
+        "delta_pct": -9.5
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.114,
+          "after": 0.116,
+          "delta_pct": 1.8
+        },
+        "scan": {
+          "before": 0.474,
+          "after": 0.418,
+          "delta_pct": -11.8
+        },
+        "rescan": {
+          "before": 0.474,
+          "after": 0.003,
+          "delta_pct": -99.4
+        },
+        "vision": {
+          "before": 0.274,
+          "after": 0.266,
+          "delta_pct": -2.9
+        },
+        "analyze": {
+          "before": 0.002,
+          "after": 0.002,
+          "delta_pct": 0.0
+        },
+        "plan": {
+          "before": 0.001,
+          "after": 0.001,
+          "delta_pct": 0.0
+        }
+      }
+    },
+    {
+      "case": "avi_360x640_8s",
+      "total_s": {
+        "before": 1.311,
+        "after": 0.79,
+        "delta_pct": -39.7
+      },
+      "peak_rss_mb": {
+        "before": 32.69,
+        "after": 27.21,
+        "delta_pct": -16.8
+      },
+      "rss_mb": {
+        "before": 30.01,
+        "after": 27.24,
+        "delta_pct": -9.2
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.114,
+          "after": 0.114,
+          "delta_pct": 0.0
+        },
+        "scan": {
+          "before": 0.465,
+          "after": 0.41,
+          "delta_pct": -11.8
+        },
+        "rescan": {
+          "before": 0.461,
+          "after": 0.003,
+          "delta_pct": -99.3
+        },
+        "vision": {
+          "before": 0.268,
+          "after": 0.26,
+          "delta_pct": -3.0
+        },
+        "analyze": {
+          "before": 0.002,
+          "after": 0.002,
+          "delta_pct": 0.0
+        },
+        "plan": {
+          "before": 0.001,
+          "after": 0.001,
+          "delta_pct": 0.0
+        }
+      }
+    },
+    {
+      "case": "webm_360x640_8s",
+      "total_s": {
+        "before": 1.306,
+        "after": 0.799,
+        "delta_pct": -38.8
+      },
+      "peak_rss_mb": {
+        "before": 32.85,
+        "after": 27.14,
+        "delta_pct": -17.4
+      },
+      "rss_mb": {
+        "before": 29.8,
+        "after": 27.16,
+        "delta_pct": -8.9
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.112,
+          "after": 0.113,
+          "delta_pct": 0.9
+        },
+        "scan": {
+          "before": 0.456,
+          "after": 0.401,
+          "delta_pct": -12.1
+        },
+        "rescan": {
+          "before": 0.451,
+          "after": 0.003,
+          "delta_pct": -99.3
+        },
+        "vision": {
+          "before": 0.284,
+          "after": 0.279,
+          "delta_pct": -1.8
+        },
+        "analyze": {
+          "before": 0.003,
+          "after": 0.002,
+          "delta_pct": -33.3
+        },
+        "plan": {
+          "before": 0.001,
+          "after": 0.001,
+          "delta_pct": 0.0
+        }
+      }
+    },
+    {
+      "case": "h264_1280x720_10s",
+      "total_s": {
+        "before": 1.441,
+        "after": 0.901,
+        "delta_pct": -37.5
+      },
+      "peak_rss_mb": {
+        "before": 33.92,
+        "after": 27.22,
+        "delta_pct": -19.8
+      },
+      "rss_mb": {
+        "before": 29.97,
+        "after": 27.23,
+        "delta_pct": -9.1
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.116,
+          "after": 0.117,
+          "delta_pct": 0.9
+        },
+        "scan": {
+          "before": 0.486,
+          "after": 0.427,
+          "delta_pct": -12.1
+        },
+        "rescan": {
+          "before": 0.478,
+          "after": 0.003,
+          "delta_pct": -99.4
+        },
+        "vision": {
+          "before": 0.357,
+          "after": 0.35,
+          "delta_pct": -2.0
+        },
+        "analyze": {
+          "before": 0.003,
+          "after": 0.003,
+          "delta_pct": 0.0
+        },
+        "plan": {
+          "before": 0.001,
+          "after": 0.001,
+          "delta_pct": 0.0
+        }
+      }
+    },
+    {
+      "case": "h264_360x640_6s_mute",
+      "total_s": {
+        "before": 1.216,
+        "after": 0.706,
+        "delta_pct": -41.9
+      },
+      "peak_rss_mb": {
+        "before": 27.49,
+        "after": 27.2,
+        "delta_pct": -1.1
+      },
+      "rss_mb": {
+        "before": 27.52,
+        "after": 27.23,
+        "delta_pct": -1.1
+      },
+      "fingerprint_same": true,
+      "stable_before": true,
+      "stable_after": true,
+      "stages": {
+        "probe": {
+          "before": 0.114,
+          "after": 0.113,
+          "delta_pct": -0.9
+        },
+        "scan": {
+          "before": 0.461,
+          "after": 0.409,
+          "delta_pct": -11.3
+        },
+        "rescan": {
+          "before": 0.46,
+          "after": 0.003,
+          "delta_pct": -99.3
+        },
+        "vision": {
+          "before": 0.179,
+          "after": 0.177,
+          "delta_pct": -1.1
+        },
+        "analyze": {
+          "before": 0.002,
+          "after": 0.002,
+          "delta_pct": 0.0
+        },
+        "plan": {
+          "before": 0.001,
+          "after": 0.001,
+          "delta_pct": 0.0
+        }
+      }
+    }
+  ]
+}

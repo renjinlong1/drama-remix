@@ -1,0 +1,650 @@
+{
+  "time": "2026-11-10 12:22:59",
+  "cases": 9,
+  "passed": 9,
+  "checks": 110,
+  "failed": 0,
+  "guards": [
+    {
+      "name": "渲染失败不残留中间目录",
+      "ok": true,
+      "detail": "0 -> 0"
+    },
+    {
+      "name": "抽帧缓存有上限",
+      "ok": true,
+      "detail": "30 -> 10"
+    }
+  ],
+  "elapsed_s": 19.5,
+  "temp_before": {
+    "render_dirs": 0,
+    "render_files": 0,
+    "thumbs": 0
+  },
+  "temp_after": {
+    "render_dirs": 0,
+    "render_files": 0,
+    "thumbs": 0
+  },
+  "records": [
+    {
+      "case": "h264_360x640_6s",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "360x640，期望 360x640"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "6.00s，期望 6s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=True，期望 True"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=3"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "48.0s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "8 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "4 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=42.0s segments=7"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "cdf6dd0723a00264 / cdf6dd0723a00264"
+        },
+        {
+          "name": "成片存在",
+          "ok": true,
+          "detail": "7479146 字节"
+        },
+        {
+          "name": "成片规格",
+          "ok": true,
+          "detail": "360x640"
+        },
+        {
+          "name": "成片可播",
+          "ok": true,
+          "detail": "42.08s"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "cdf6dd0723a00264",
+      "render": {
+        "duration": 42.08,
+        "size_kb": 7303.9,
+        "reported": 42.08
+      }
+    },
+    {
+      "case": "h264_720x1280_15s",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "720x1280，期望 720x1280"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "15.00s，期望 15s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=True，期望 True"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=7"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "120.0s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "16 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "5 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=60.0s segments=4"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "65bfaecb0462538e / 65bfaecb0462538e"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "65bfaecb0462538e"
+    },
+    {
+      "case": "h264_720x1280_45s",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "720x1280，期望 720x1280"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "45.00s，期望 45s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=True，期望 True"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=8"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "360.0s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "64 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "15 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=41.9s segments=1"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "ecf6b9837661a890 / ecf6b9837661a890"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "ecf6b9837661a890"
+    },
+    {
+      "case": "mkv_720x1280_15s",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "720x1280，期望 720x1280"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "15.02s，期望 15s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=True，期望 True"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=7"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "120.2s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "16 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "5 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=60.1s segments=4"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "4df60f6b45b03c8c / 4df60f6b45b03c8c"
+        },
+        {
+          "name": "成片存在",
+          "ok": true,
+          "detail": "36374467 字节"
+        },
+        {
+          "name": "成片规格",
+          "ok": true,
+          "detail": "720x1280"
+        },
+        {
+          "name": "成片可播",
+          "ok": true,
+          "detail": "60.18s"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "4df60f6b45b03c8c",
+      "render": {
+        "duration": 60.18,
+        "size_kb": 35521.9,
+        "reported": 60.18
+      }
+    },
+    {
+      "case": "mov_360x640_8s",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "360x640，期望 360x640"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "8.00s，期望 8s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=True，期望 True"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=4"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "64.0s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "8 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "4 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=56.0s segments=7"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "2ad1521a9c6f462c / 2ad1521a9c6f462c"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "2ad1521a9c6f462c"
+    },
+    {
+      "case": "avi_360x640_8s",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "360x640，期望 360x640"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "8.04s，期望 8s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=True，期望 True"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=4"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "64.3s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "8 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "4 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=56.3s segments=7"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "8263d5808624c94f / 8263d5808624c94f"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "8263d5808624c94f"
+    },
+    {
+      "case": "webm_360x640_8s",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "360x640，期望 360x640"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "8.01s，期望 8s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=True，期望 True"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=4"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "64.1s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "8 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "4 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=56.1s segments=7"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "4b66feb0be9ed4c5 / 4b66feb0be9ed4c5"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "4b66feb0be9ed4c5"
+    },
+    {
+      "case": "h264_1280x720_10s",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "1280x720，期望 1280x720"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "10.00s，期望 10s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=True，期望 True"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=5"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "80.0s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "16 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "4 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=60.0s segments=6"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "ba0c3e0296d221da / ba0c3e0296d221da"
+        },
+        {
+          "name": "成片存在",
+          "ok": true,
+          "detail": "33719297 字节"
+        },
+        {
+          "name": "成片规格",
+          "ok": true,
+          "detail": "1280x720"
+        },
+        {
+          "name": "成片可播",
+          "ok": true,
+          "detail": "60.07s"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "ba0c3e0296d221da",
+      "render": {
+        "duration": 60.07,
+        "size_kb": 32929.0,
+        "reported": 60.07
+      }
+    },
+    {
+      "case": "h264_360x640_6s_mute",
+      "checks": [
+        {
+          "name": "视频可列举",
+          "ok": true,
+          "detail": "找到 8 个，期望 8"
+        },
+        {
+          "name": "分辨率",
+          "ok": true,
+          "detail": "360x640，期望 360x640"
+        },
+        {
+          "name": "时长",
+          "ok": true,
+          "detail": "6.00s，期望 6s"
+        },
+        {
+          "name": "音轨",
+          "ok": true,
+          "detail": "has_audio=False，期望 False"
+        },
+        {
+          "name": "导入分集",
+          "ok": true,
+          "detail": "8 集，期望 8"
+        },
+        {
+          "name": "字幕配对",
+          "ok": true,
+          "detail": "字幕集=8 首集台词=3"
+        },
+        {
+          "name": "整剧时间轴",
+          "ok": true,
+          "detail": "48.0s"
+        },
+        {
+          "name": "节拍拆解",
+          "ok": true,
+          "detail": "8 个节拍"
+        },
+        {
+          "name": "钩子字段兼容",
+          "ok": true,
+          "detail": "4 条候选"
+        },
+        {
+          "name": "顺剪方案",
+          "ok": true,
+          "detail": "estimated=42.0s segments=7"
+        },
+        {
+          "name": "结果一致",
+          "ok": true,
+          "detail": "ca071887518367ca / ca071887518367ca"
+        }
+      ],
+      "errors": [],
+      "fingerprint": "ca071887518367ca"
+    }
+  ]
+}

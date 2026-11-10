@@ -10,6 +10,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,7 +49,7 @@ def ffmpeg() -> str:
 
 
 def run(args: list[str], timeout: int = 3600, check: bool = True) -> subprocess.CompletedProcess:
-    p = subprocess.run([ffmpeg(), "-hide_banner", "-nostdin", *args],
+    p = subprocess.run([ffmpeg(), "-hide_banner", "-nostdin", "-nostats", *args],
                        capture_output=True, timeout=timeout,
                        creationflags=CREATE_NO_WINDOW)
     if check and p.returncode != 0:
@@ -70,9 +72,38 @@ def run_out(args: list[str], timeout: int = 600) -> bytes:
 
 _TIME = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)")
 
+# 探测结果缓存：一次导入要给每集启一个 ffmpeg 进程（约 0.06~0.12s），
+# 重复导入 / 打开项目 / 包装预览会对同一批文件反复探测。按「绝对路径+大小+mtime」
+# 做有界 LRU，文件被替换会自动失效；返回副本，调用方改字典不会污染缓存。
+_PROBE_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
+_PROBE_LOCK = threading.Lock()
+_PROBE_MAX = 256
 
-def probe(path: str | Path) -> dict:
+
+def _probe_key(path: str | Path) -> tuple:
+    p = Path(path)
+    try:
+        st = p.stat()
+        return (str(p.resolve()), st.st_size, st.st_mtime_ns)
+    except OSError:
+        return (str(p), 0, 0)
+
+
+def clear_probe_cache() -> None:
+    with _PROBE_LOCK:
+        _PROBE_CACHE.clear()
+
+
+def probe(path: str | Path, use_cache: bool = True) -> dict:
     """返回 duration/width/height/fps/has_audio/vcodec/acodec/sample_rate。"""
+    key = _probe_key(path) if use_cache else None
+    if key is not None:
+        with _PROBE_LOCK:
+            hit = _PROBE_CACHE.get(key)
+            if hit is not None:
+                _PROBE_CACHE.move_to_end(key)
+                return dict(hit)
+
     out = run_text(["-i", str(path)], timeout=60)
     info = {"path": str(path), "duration": 0.0, "width": 0, "height": 0,
             "fps": 0.0, "has_audio": False, "has_video": False,
@@ -105,7 +136,47 @@ def probe(path: str | Path) -> dict:
             info["channels"] = 2
     if not info["width"] or not info["height"]:
         raise RuntimeError(f"无法解析视频信息：{Path(path).name}")
+
+    if key is not None:
+        with _PROBE_LOCK:
+            _PROBE_CACHE[key] = dict(info)
+            _PROBE_CACHE.move_to_end(key)
+            while len(_PROBE_CACHE) > _PROBE_MAX:
+                _PROBE_CACHE.popitem(last=False)
     return info
+
+
+def iter_lines(args: list[str], stream: str = "stderr", timeout: int = 1800):
+    """逐行流式读 ffmpeg 输出，不把整个 stdout/stderr 攒在内存里。
+
+    blackframe 日志走 stderr、ametadata=print:file=- 走 stdout；只接管需要的那一路，
+    另一路直接 DEVNULL，避免双管道互相等待。生成器结束时确保子进程被回收。
+    """
+    cmd = [ffmpeg(), "-hide_banner", "-nostdin", "-nostats", *args]
+    if stream == "stdout":
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             creationflags=CREATE_NO_WINDOW)
+        pipe = p.stdout
+    else:
+        p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                             creationflags=CREATE_NO_WINDOW)
+        pipe = p.stderr
+    try:
+        for raw in pipe:
+            yield raw.decode("utf-8", "replace").rstrip("\r\n")
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
+        try:
+            p.wait(timeout=min(30, timeout))
+        except Exception:
+            p.kill()
+            try:
+                p.wait(timeout=10)
+            except Exception:
+                pass
 
 
 def version() -> str:

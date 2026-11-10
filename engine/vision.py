@@ -43,23 +43,20 @@ _PTS = re.compile(r"^frame:(\d+)\s+pts:\d+\s+pts_time:([\d.]+)")
 
 
 # ── 单路信号 ─────────────────────────────────────────────────────────
-def _run_both(args: list[str], timeout: int = 1800) -> str:
-    """ffmpeg 的 metadata 打印走 stdout、滤镜日志走 stderr，两边都要。"""
-    p = ffmpegx.run(["-nostats", *args], timeout=timeout, check=False)
-    return (p.stdout + b"\n" + p.stderr).decode("utf-8", "replace")
-
-
+# 以前把 ffmpeg 的 stdout+stderr 全量 capture 成一个大字符串再 splitlines，
+# 长片（尤其 astats 每窗多行）会同时占着 bytes / 解码后的 str / 行列表三份内存。
+# 改为逐行流式解析：峰值内存只跟「最终 series」有关，不再跟日志体积有关。
 def _diff_series(video: str) -> list[tuple[float, int]]:
     """[(t, pblack)]，pblack 越小说明画面动得越厉害。"""
-    out = _run_both([
+    args = [
         "-i", video, "-an",
         "-vf", (f"fps={DIFF_FPS},scale={DIFF_W}:-2,format=gray,"
                 f"tblend=all_mode=difference,"
                 f"blackframe=amount=0:threshold={DIFF_THRESHOLD}"),
         "-f", "null", "-",
-    ])
+    ]
     series: list[tuple[float, int]] = []
-    for line in out.splitlines():
+    for line in ffmpegx.iter_lines(args, "stderr"):
         if "blackframe" not in line:
             continue
         m = _BF.search(line)
@@ -70,14 +67,14 @@ def _diff_series(video: str) -> list[tuple[float, int]]:
 
 def _audio_series(video: str) -> list[tuple[float, float]]:
     """[(t, peak_db)]，0.1 秒一窗。"""
-    out = _run_both([
+    args = [
         "-i", video, "-vn",
         "-af", f"astats=metadata=1:reset=1:length={AUD_WIN},ametadata=print:file=-",
         "-f", "null", "-",
-    ])
+    ]
     series: list[tuple[float, float]] = []
     t = 0.0
-    for line in out.splitlines():
+    for line in ffmpegx.iter_lines(args, "stdout"):
         line = line.strip()
         m = _PTS.match(line)
         if m:

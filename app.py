@@ -848,8 +848,33 @@ def src_video(ep: int):
     return FileResponse(str(f), media_type="video/mp4")
 
 
+THUMB_LIMIT = 2000
+_thumb_new = 0
+
+
+def _prune_thumbs(limit: int = THUMB_LIMIT) -> None:
+    """抽帧缓存 LRU：只留最近 limit 张。
+
+    以前每张缩略图按「文件名+时间点」永久留盘，长时间多剧切换后会无限堆积。
+    只在生成新图时低频触发，避免每次请求都扫一遍目录。
+    """
+    try:
+        files = [p for p in THUMBS.glob("*.jpg") if p.is_file()]
+        if len(files) <= limit:
+            return
+        files.sort(key=lambda p: p.stat().st_mtime)
+        for p in files[:len(files) - limit]:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 @app.get("/api/frame")
 def frame(ep: int, t: float = 1.0):
+    global _thumb_new
     with LOCK:
         p = STATE["project"]
     if not p:
@@ -860,6 +885,9 @@ def frame(ep: int, t: float = 1.0):
     if not key.exists():
         ffmpegx.run(["-y", "-ss", f"{tt:.2f}", "-i", e["path"], "-frames:v", "1",
                      "-vf", "scale=180:-2", "-q:v", "5", str(key)], timeout=60, check=False)
+        _thumb_new += 1
+        if _thumb_new % 50 == 0:
+            _prune_thumbs()
     if not key.exists():
         raise HTTPException(404, "取帧失败")
     return FileResponse(str(key), media_type="image/jpeg")
