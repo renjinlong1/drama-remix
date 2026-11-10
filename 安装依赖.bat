@@ -1,5 +1,5 @@
 @echo off
-title 安装依赖
+title 枫的瞬剪 · 安装依赖
 cd /d "%~dp0"
 set PYTHONIOENCODING=gbk
 set "PY="

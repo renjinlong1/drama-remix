@@ -1,4 +1,4 @@
-"""顺剪工作台 · 本地服务。
+"""枫的瞬剪 · 本地服务。
 
 启动后浏览器打开 127.0.0.1:8780，三步产出素材：
 导入剧集 → 选钩子 → 顺剪出片。
@@ -38,7 +38,7 @@ OUTPUT = ROOT / "output"
 for d in (DATA, UPLOADS, THUMBS, OUTPUT, ROOT / "projects"):
     d.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="顺剪工作台")
+app = FastAPI(title="枫的瞬剪")
 app.mount("/assets", StaticFiles(directory=str(WEB)), name="assets")
 
 STATE: dict = {"project": None, "analysis": None, "plan": None, "job": None,
@@ -1111,7 +1111,7 @@ def _port_busy(port: int) -> bool:
 
 
 def _ours_on_port(port: int) -> bool:
-    """端口上是不是已经有一个顺剪工作台在跑（别把别的软件当成自己）。"""
+    """端口上是不是已经有一个枫的瞬剪在跑（别把别的软件当成自己）。"""
     import urllib.request
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=2) as r:
@@ -1125,16 +1125,17 @@ def main():
     port = int(os.environ.get("DC_PORT", 8780))
     url = f"http://127.0.0.1:{port}"
     if _port_busy(port) and _ours_on_port(port):
-        # 已经开着一个工作台了：直接把界面带到前台，不要抢端口报错
-        print(f"\n  工作台已经在运行：{url}\n  正在打开浏览器……\n")
+        # 已经开着一个枫的瞬剪了：直接把界面带到前台，不要抢端口报错
+        print(f"\n  枫的瞬剪已经在运行：{url}\n  正在打开浏览器……\n")
         if not os.environ.get("DC_NO_BROWSER"):
             webbrowser.open(url)
         time.sleep(1.0)
         return
-    print(f"\n  顺剪工作台已启动：{url}\n  关闭此窗口即退出\n")
+    print(f"\n  枫的瞬剪已启动：{url}\n  关闭此窗口即退出\n")
     if not os.environ.get("DC_NO_BROWSER"):
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=port,
+                log_level=os.environ.get("DC_LOG", "warning"))
 
 
 if __name__ == "__main__":

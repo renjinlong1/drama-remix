@@ -1,5 +1,5 @@
 @echo off
-title 顺剪工作台
+title 枫的瞬剪
 cd /d "%~dp0"
 set PYTHONIOENCODING=gbk
 set "PY="
@@ -21,7 +21,7 @@ if not defined PY (
 "%PY%" -c "import fastapi, uvicorn, PIL" 2>nul
 if errorlevel 1 call "%~dp0安装依赖.bat"
 echo.
-echo   启动中……浏览器会自动打开 http://127.0.0.1:8780
+echo   枫的瞬剪启动中……浏览器会自动打开 http://127.0.0.1:8780
 echo   关闭这个窗口就退出程序
 echo.
 "%PY%" app.py
