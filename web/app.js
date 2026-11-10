@@ -721,7 +721,7 @@ function renderHooks() {
     const mv = Number(h.shift || 0);
     const cls = 'hook' + (on ? ' on' : '') + (n ? ' batched' : '') + (h.manual ? ' man' : '') +
       (Math.abs(mv) > 0.01 ? ' mvd' : '');
-    const kind = h.kind || '剧情节点';
+    const kind = h.primary_label || h.kind || '剧情节点';
     const score = h.manual ? '手动' : h.score.toFixed(0);
     const label = String(h.text || '').slice(0, 56) ||
       (h.visual_only ? '无台词 · 画面钩子' : '');

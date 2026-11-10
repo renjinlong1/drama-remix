@@ -381,6 +381,9 @@ def find_visual_highlights(proj: dict, beats: list[dict], acts: list[dict] | Non
                 "hits": [], "beats": [],
                 "visual_only": True,
                 "_vscore": round(strength, 3),
+                "_v": round(v, 3),
+                "_a": round(max(float(x.get("a", 0.0)) for x in cl), 3),
+                "_burst": round(strength, 3),
             })
             if len(out) >= max_total:
                 break
@@ -424,11 +427,259 @@ def _ensure_visual(picked: list[dict], cands: list[dict], reserve: int) -> list[
     return picked
 
 
+# ── 类型判定 / 证据 / 配额重排（可替换的规则层） ─────────────────────
+TYPE_ORDER = ("energy", "action", "dialog", "reveal", "suspense",
+              "tension", "performance")
+TYPE_LABELS = {
+    "energy": "高能画面", "action": "动作冲突", "dialog": "台词冲突",
+    "reveal": "身份反转", "suspense": "悬念留扣",
+    "performance": "戏点张力", "tension": "情感张力",
+}
+# 旧前端只认五类；kind 原值不动，新类型通过 primary_label 对外展示
+TYPE_KIND_ALIAS = {
+    "energy": "爆发点", "action": "动作冲突", "dialog": "台词冲突",
+    "reveal": "身份反转", "suspense": "悬念留扣",
+    "performance": "剧情节点", "tension": "剧情节点",
+}
+# 稀缺度加成：新类型天然少见，给一点入池优势，但不改变展示分
+TYPE_BOOST = {"energy": 0.10, "performance": 0.08, "tension": 0.08,
+              "action": 0.04, "suspense": 0.03, "reveal": 0.02, "dialog": 0.0}
+
+
+def _clamp01(x: float) -> float:
+    return round(min(1.0, max(0.0, float(x))), 3)
+
+
+def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
+                       ep_count: int) -> dict:
+    """给一条候选补齐类型、证据、质量与排序字段（原地修改并返回）。
+
+    **代理判定声明**：这里只用现有低层信号（台词命中、画面/声音冲击强度、
+    时长、位置）区分「强运动+强声音」「静+长」「静+有声音」这类可观测形态，
+    不是语义级的内容识别。判定表集中在 rules 里；以后信号层升级到景别、
+    人物距离、表情等，只需替换 _signals 计算与 rules，下面的字段契约不变。
+    """
+    hits = set(c.get("hits") or [])
+    text = c.get("text") or ""
+    dur = max(0.3, float(c.get("dur", 0.0)))
+    ep = int(c.get("ep", 1))
+    v = float(c.pop("_v", 0.0))
+    a = float(c.pop("_a", 0.0))
+    burst = float(c.pop("_burst", c.get("act", 0.0)))
+    has_dialog = bool(text.strip() or c.get("beats"))
+
+    dialog = _clamp01(len(hits & conflict_words) / 2.0 + min(1.0, len(text) / 40.0) * 0.25)
+    reveal = _clamp01(len(hits & reveal_words) / 1.5)
+    susp_s = _clamp01(float(c.get("susp", 0.0)) / 3.0)
+    motion = _clamp01(v / 1.4 if v else float(c.get("act", 0.0)) / 2.5)
+    audio = _clamp01(a / 1.4 if a else 0.0)
+    intensity = _clamp01(burst / 2.5)
+    stillness = _clamp01(1.0 - motion - 0.25 * audio + (0.2 if dur >= 6.0 else 0.0))
+    position = _clamp01(1.0 - (ep - 1) / max(1, ep_count))
+    signals = {
+        "dialog": dialog, "reveal": reveal, "suspense": susp_s,
+        "motion": motion, "audio": audio, "intensity": intensity,
+        "stillness": stillness, "position": position,
+    }
+
+    rules = [
+        ("energy",      lambda s: s["motion"] >= 0.55 and s["intensity"] >= 0.5 and s["audio"] >= 0.25),
+        ("action",      lambda s: s["motion"] >= 0.30 or s["intensity"] >= 0.60),
+        ("dialog",      lambda s: s["dialog"] >= 0.35),
+        ("reveal",      lambda s: s["reveal"] >= 0.34),
+        ("suspense",    lambda s: s["suspense"] >= 0.34),
+        ("tension",     lambda s: s["stillness"] >= 0.50 and s["audio"] >= 0.28 and s["dialog"] <= 0.30),
+        ("performance", lambda s: s["stillness"] >= 0.62 and s["dialog"] <= 0.45),
+    ]
+    types = [t for t, ok in rules if ok(signals)]
+    if not types:
+        types = ["dialog" if has_dialog else "performance"]
+    primary = types[0]
+    primary_signal = {
+        "energy": (motion + intensity + audio) / 3.0,
+        "action": max(motion, intensity),
+        "dialog": dialog, "reveal": reveal, "suspense": susp_s,
+        "tension": (stillness + audio) / 2.0,
+        "performance": stillness * (1.0 - dialog),
+    }.get(primary, 0.3)
+    confidence = _clamp01(0.25 + 0.65 * primary_signal
+                          + (0.10 if len(types) > 1 else 0.0))
+
+    evidence: list[dict] = []
+    if hits:
+        evidence.append({"kind": "dialog", "strength": dialog,
+                         "note": "命中台词：" + " / ".join(sorted(hits)[:3])})
+    if motion or intensity:
+        evidence.append({"kind": "visual", "strength": max(motion, intensity),
+                         "note": "画面冲击 / 运动强度"})
+    if audio:
+        evidence.append({"kind": "audio", "strength": audio, "note": "声音强度"})
+    if c.get("at_end"):
+        evidence.append({"kind": "structure", "strength": 0.6, "note": "落在集末"})
+    if not has_dialog:
+        evidence.append({"kind": "silence", "strength": stillness, "note": "该段没有台词"})
+
+    # 首帧/语义完整目前由候选生成阶段的「贴边排除」保证，未做逐帧检测；
+    # 信号层补齐后这里可以升级为真实检测结果，字段名不变。
+    quality = {
+        "playable": 3.0 <= dur <= 20.0,
+        "first_frame_ok": True,
+        "complete": (not c.get("at_end", False)) or dur >= 4.5,
+    }
+    source = "fusion" if (has_dialog and (motion or audio)) else ("dialog" if has_dialog else "visual")
+
+    rank = float(c.get("score", 0.0))
+    rank *= (1.0 + TYPE_BOOST.get(primary, 0.0)
+             + (0.05 if len(types) > 1 else 0.0) + 0.03 * position)
+    if confidence < 0.45:
+        rank *= 0.92
+
+    c.update({
+        "types": types,
+        "primary_type": primary,
+        "primary_label": TYPE_LABELS.get(primary, "剧情节点"),
+        "confidence": confidence,
+        "signals": signals,
+        "evidence": evidence,
+        "source": source,
+        "has_dialog": has_dialog,
+        "rank_score": round(rank, 2),
+        "rank_reason": (TYPE_LABELS.get(primary, "剧情节点") + " · "
+                        + ("多源印证 · " if len(types) > 1 else "")
+                        + ("稀缺加成 · " if TYPE_BOOST.get(primary, 0) >= 0.08 else "")
+                        + f"第{ep}集"),
+        "dedup_key": f"{ep}@{round(float(c['g0']) / 2.0)}",
+        "quality": quality,
+    })
+    return c
+
+
+def _overlap_near(a: dict, b: dict) -> bool:
+    if a["ep"] != b["ep"]:
+        return False
+    ov = min(a["g1"], b["g1"]) - max(a["g0"], b["g0"])
+    return ov > 0.6 * max(0.1, min(a["dur"], b["dur"]))
+
+
+def dedup_near(picked: list[dict], cands: list[dict], goal: int) -> list[dict]:
+    """同集内窗口重叠超过 60% 视为近重复，保留排序分高的，再从全池补足。"""
+    kept: list[dict] = []
+    for c in sorted(picked, key=lambda x: -x["rank_score"]):
+        if not any(_overlap_near(c, k) for k in kept):
+            kept.append(c)
+    target = min(goal, len(picked)) if picked else 0
+    if len(kept) < target:
+        chosen = {id(c) for c in kept}
+        for c in sorted(cands, key=lambda x: -x["rank_score"]):
+            if len(kept) >= target:
+                break
+            if id(c) in chosen or any(_overlap_near(c, k) for k in kept):
+                continue
+            kept.append(c)
+            chosen.add(id(c))
+    return kept
+
+
+def cap_visual(picked: list[dict], cands: list[dict], goal: int,
+               reserve: int, ratio: float = 0.55) -> list[dict]:
+    """给非对白候选设总量上限，保证对白型钩子不被整体挤掉（不退化约束）。
+
+    只换出排序分最低的纯画面候选，补入不与现有片段近重复的对白候选。
+    """
+    cap = max(reserve, int(goal * ratio))
+    chosen = {id(c) for c in picked}
+    for _ in range(goal):
+        vis = [p for p in picked if p.get("visual_only")]
+        if len(vis) <= cap:
+            break
+        victim = min(vis, key=lambda p: p["rank_score"])
+        repl = sorted((c for c in cands if id(c) not in chosen
+                       and not c.get("visual_only")
+                       and not any(_overlap_near(c, p) for p in picked)),
+                      key=lambda x: -x["rank_score"])
+        if not repl:
+            break
+        picked.remove(victim)
+        picked.append(repl[0])
+        chosen.add(id(repl[0]))
+    return picked
+
+
+def interleave_types(picked: list[dict]) -> list[dict]:
+    """展示顺序按类型轮转：前几条就能看到不同钩子，组内仍按强度降序。
+
+    只改数组顺序、不改分数；配额与去重都在它之前完成，避免补进来的候选
+    又把同一类型堆在一起。
+    """
+    groups: dict[str, list[dict]] = {}
+    for c in picked:
+        groups.setdefault(c.get("primary_type") or "other", []).append(c)
+    for g in groups.values():
+        g.sort(key=lambda x: -x.get("_eff", x["rank_score"]))
+    out: list[dict] = []
+    order = list(TYPE_ORDER) + ["other"]
+    while any(groups.get(t) for t in order):
+        for t in order:
+            g = groups.get(t)
+            if g:
+                out.append(g.pop(0))
+    return out
+
+
+def apply_type_quotas(picked: list[dict], cands: list[dict], goal: int,
+                      min_per_type: int = 1, max_per_type: int = 4) -> list[dict]:
+    """配额优先于纯分数：每类先保底 N 条、再限制上限，最后才比强度。"""
+    if not picked:
+        return picked
+    chosen = {id(c) for c in picked}
+
+    def pool(t=None, exclude=None) -> list[dict]:
+        return sorted(
+            (c for c in cands if id(c) not in chosen
+             and (t is None or c.get("primary_type") == t)
+             and (exclude is None or c.get("primary_type") != exclude)
+             and not any(_overlap_near(c, p) for p in picked)),
+            key=lambda x: -x["rank_score"])
+
+    for _ in range(goal):
+        counts: dict[str, int] = {}
+        for p in picked:
+            t = p.get("primary_type") or "other"
+            counts[t] = counts.get(t, 0) + 1
+        over = next((t for t, n in counts.items() if n > max_per_type), None)
+        if over is None:
+            break
+        victim = min((p for p in picked if (p.get("primary_type") or "other") == over),
+                     key=lambda p: p["rank_score"])
+        repl = pool(exclude=over)
+        if not repl:
+            break
+        picked.remove(victim)
+        picked.append(repl[0])
+        chosen.add(id(repl[0]))
+
+    available = {c.get("primary_type") for c in cands if c.get("primary_type")}
+    for t in TYPE_ORDER:
+        if t not in available:
+            continue
+        for _ in range(min_per_type):
+            if sum(1 for p in picked if p.get("primary_type") == t) >= min_per_type:
+                break
+            repl = pool(t=t)
+            if not repl:
+                break
+            victim = min(picked, key=lambda p: p["rank_score"])
+            picked.remove(victim)
+            picked.append(repl[0])
+            chosen.add(id(repl[0]))
+    return picked
+
+
 def find_highlights(beats: list[dict], top_k: int = 18,
                     min_dur: float = 4.5, max_dur: float = 20.0,
                     min_keep: int = 15, seed: int | None = None,
                     extra_visual: list[dict] | None = None,
-                    visual_reserve: int = 3) -> list[dict]:
+                    visual_reserve: int = 3, type_quota: int = 1) -> list[dict]:
     """找出 15-20 个高光开头候选。
 
     一段剧情算不算高光，看三件事：
@@ -492,22 +743,34 @@ def find_highlights(beats: list[dict], top_k: int = 18,
     # 全压下去。用台词候选分数的中位数当锚点，把它们映射到同一区间的中段。
     if extra_visual:
         ds = sorted(c["score"] for c in cands)
-        anchor = max(4.0, ds[len(ds) // 2] if ds else 12.0)
+        # 锚点取台词候选的高分位（P85）而不是全体中位数：真正入池的本来就是
+        # 高分段，用中位数会把视觉候选永远压在池底，只能靠保底位露面。
+        anchor = max(4.0, ds[min(len(ds) - 1, int(len(ds) * 0.75))] if ds else 12.0)
         for vc in extra_visual:
             c = dict(vc)                     # 别改动调用方持有的对象
             raw = float(c.pop("_vscore", 0.0))
             t = min(1.0, max(0.0, (raw - 0.85) / 2.15))
-            c["score"] = round(anchor * (0.8 + 0.45 * t), 2)
+            c["score"] = round(min(anchor, anchor * (0.75 + 0.40 * t)), 2)
             cands.append(c)
 
-    # 抖动只影响「谁先被挑中」，不动展示出去的分数
+    # 统一补齐类型 / 证据 / 质量 / 排序分；不合格的直接挡在门外（L0 轻量门槛）
+    ep_count = len({c["ep"] for c in cands}) or 1
+    kept_cands = []
+    for c in cands:
+        classify_candidate(c, conflict_words=LEX_CONFLICT,
+                           reveal_words=LEX_REVEAL, ep_count=ep_count)
+        if c["quality"]["playable"]:
+            kept_cands.append(c)
+    cands = kept_cands
+
+    # 抖动只作用在排序分上，且只在同档内小幅波动；展示分 score 保持原义
     if seed:
         rng = random.Random(int(seed) & 0xFFFFFFFF)
         for c in cands:
-            c["_eff"] = c["score"] * (1.0 + rng.uniform(-0.08, 0.08))
+            c["_eff"] = c["rank_score"] * (1.0 + rng.uniform(-0.08, 0.08))
     else:
         for c in cands:
-            c["_eff"] = c["score"]
+            c["_eff"] = c["rank_score"]
     cands.sort(key=lambda c: (-c["_eff"], c["g0"]))
 
     def pick(want: int, per_ep: int, gap: float) -> list[dict]:
@@ -533,10 +796,15 @@ def find_highlights(beats: list[dict], top_k: int = 18,
         if len(picked) >= goal:
             break
 
+    picked = dedup_near(picked, cands, goal)
     picked = _ensure_visual(picked, cands, min(visual_reserve, goal))
-    picked.sort(key=lambda c: (-c["_eff"], c["g0"]))
+    picked = cap_visual(picked, cands, goal, min(visual_reserve, goal))
+    # 配额放最后一道：去重补位后仍要守住每类上下限，且补入时不再引入近重复
+    picked = apply_type_quotas(picked, cands, goal, min_per_type=type_quota)
+    picked = interleave_types(picked)                  # 最后按类型轮转，避免同类霸榜
     for i, p in enumerate(picked):
-        p.pop("_eff", None)
+        for k in ("_eff", "_v", "_a", "_burst", "_vscore"):
+            p.pop(k, None)
         p["id"] = i
     return picked
 
