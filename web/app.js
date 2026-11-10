@@ -13,7 +13,7 @@ const S = {
   batch: {}, batchEnd: {}, bendCands: {}, hkHide: new Set(), hkAdd: [], hkFilter: 'all',
   hkPrefs: { enabled: {}, weight: {} },
   hkShift: {}, endShift: {},
-  batchAlloc: 'total', batchTotal: 20, outdir: '', outShown: '',
+  batchAlloc: 'total', batchTotal: 20, outdir: '', outShown: '', nameTpl: '',
   target: 360, lead: 1, tailMode: 'auto', tailFixed: 2, efVideoDur: 0, jobTimer: null, saveTimer: null,
 };
 
@@ -2359,6 +2359,7 @@ $('#btnRender').onclick = async () => {
   const base = Object.assign(packOpts(), {
     logo: S.logo, logo_pos: $('#logoPos').value,
     outdir: S.outdir, outdir_sub: !$('#bFlat').checked,
+    name_tpl: String(S.nameTpl || '').trim(),
   });
   try {
     if (batch) {
@@ -2389,7 +2390,8 @@ $('#btnRender').onclick = async () => {
           : '';
         $('#out').innerHTML = res.results.map((r) =>
           '<video src="/api/video?path=' + encodeURIComponent(r.video) + '" controls preload="metadata"></video>' +
-          '<div class="oi"><span>开头' + r.hook + ' · 第' + r.copy + '条 · ' + fmt(r.duration) +
+          '<div class="oi"><span>' + (r.name ? esc(r.name) + ' · ' : '') +
+            '开头' + r.hook + ' · 第' + r.copy + '条 · ' + fmt(r.duration) +
             (r.from ? ' · 第' + r.from.ep + '集→第' + r.to.ep + '集' : '') +
             (r.end_spec ? ' · <b class="endspec">指定结尾</b>' : '') + ' · ' + esc(r.end_reason || '') +
           '</span><span>' + r.size_mb + ' MB</span></div>').join('') + errBlock;
@@ -2405,7 +2407,8 @@ $('#btnRender').onclick = async () => {
         if (!res) return;
         $('#out').innerHTML =
           '<video src="/api/video?path=' + encodeURIComponent(res.video) + '" controls></video>' +
-          '<div class="oi"><span>' + fmt(res.duration) + ' · ' + res.width + '×' + res.height + '</span>' +
+          '<div class="oi"><span>' + (res.name ? esc(res.name) + ' · ' : '') +
+            fmt(res.duration) + ' · ' + res.width + '×' + res.height + '</span>' +
           '<span>' + res.size_mb + ' MB</span></div>';
         if (res.dir) showOutDir(res.dir);
         $('#btnShowOut').hidden = false;
@@ -2670,8 +2673,56 @@ $('#btnOpenDir').onclick = () => {
   if (!d) { toast('还没选保存文件夹', true); return; }
   api('/api/reveal', { path: d }).catch((e) => toast(e.message, true));
 };
+
+/* ── 文件名格式：末尾数字是起始序号，前面原样保留 ──────────
+   预览走后端同一个解析函数，避免界面写一套、导出写另一套。 */
+let nameTplTimer = null;
+function nameTplTip(html, bad) {
+  const el = $('#bNameTip');
+  el.className = 'nametip' + (bad ? ' bad' : '');
+  el.innerHTML = html;
+}
+async function nameTplPreview() {
+  const tpl = String(S.nameTpl || '').trim();
+  if (!tpl) {
+    nameTplTip('留空 = 按剧名命名。填了模板：末尾数字当起始序号，本批逐条 +1，遇到同名文件自动顺延。');
+    return;
+  }
+  try {
+    const r = await api('/api/name/preview', { name_tpl: tpl, count: 3 });
+    if (!r.ok) { nameTplTip(esc(r.msg || '文件名格式不对'), true); return; }
+    const first = (r.names || [])[0] || '';
+    nameTplTip('本批首个文件：<span class="nt-name">' + esc(first) + '</span>' +
+      '<br>序号起点 <b>' + r.start + '</b>，逐条 +1；同名自动顺延，不覆盖旧成片。' +
+      ($('#bFlat').checked ? '' : '要跨批接着编号，勾选下方「直接放进所选文件夹」。'));
+  } catch (e) {
+    nameTplTip(esc(e.message), true);
+  }
+}
+function setNameTpl(v, save) {
+  S.nameTpl = String(v || '').trim();
+  if ($('#bNameTpl').value !== S.nameTpl) $('#bNameTpl').value = S.nameTpl;
+  $('#btnClearName').hidden = !S.nameTpl;
+  if (save !== false) {
+    try {
+      if (S.nameTpl) localStorage.setItem('dc.nameTpl', S.nameTpl);
+      else localStorage.removeItem('dc.nameTpl');
+    } catch (x) { /* 隐私模式忽略 */ }
+  }
+  nameTplPreview();
+}
+$('#bNameTpl').oninput = (e) => {
+  S.nameTpl = e.target.value;
+  $('#btnClearName').hidden = !S.nameTpl.trim();
+  clearTimeout(nameTplTimer);
+  nameTplTimer = setTimeout(() => setNameTpl(e.target.value), 350);
+};
+$('#bNameTpl').onblur = (e) => setNameTpl(e.target.value);
+$('#bNameTpl').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } };
+$('#btnClearName').onclick = () => { setNameTpl(''); toast('已清空命名格式，回到按剧名命名'); };
 try {
   S.outdir = localStorage.getItem('dc.outDir') || '';
+  S.nameTpl = localStorage.getItem('dc.nameTpl') || '';
   const t = Number(localStorage.getItem('dc.batchTotal'));
   if (t >= 1 && t <= 200) S.batchTotal = t;
   $('#bFlat').checked = localStorage.getItem('dc.outFlat') === '1';
@@ -2713,9 +2764,13 @@ $('#bFlat').onchange = (e) => {
     else localStorage.removeItem('dc.outFlat');
   } catch (x) { /* 忽略 */ }
   toast(e.target.checked ? '成片直接放进所选文件夹' : '成片会建「剧名_时间」子文件夹存放');
+  nameTplPreview();
 };
 $('#bTotal').value = String(S.batchTotal);
 $('#bDir').value = S.outdir;
+$('#bNameTpl').value = S.nameTpl;
+$('#btnClearName').hidden = !S.nameTpl;
+nameTplPreview();
 $('#btnOpenDir').hidden = !S.outdir;
 $('#target').oninput = (e) => {
   S.target = Number(e.target.value);

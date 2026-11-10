@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from engine import analyze as analyzemod
-from engine import ffmpegx, ocrsubs, pack
+from engine import ffmpegx, naming, ocrsubs, pack
 from engine import plan as planmod
 from engine import project as projmod
 from engine import render as rendermod
@@ -603,6 +603,18 @@ def _safe_name(title: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "", title)[:40] or "成片"
 
 
+def _name_tpl(body: dict) -> str:
+    """取导出命名模板；语法不对就地 400，别等渲染到一半才失败。"""
+    tpl = str(body.get("name_tpl") or "").strip()
+    if not tpl:
+        return ""
+    try:
+        naming.parse(tpl)
+    except naming.NameTemplateError as e:
+        raise HTTPException(400, str(e)) from None
+    return tpl
+
+
 def _out_dir(body: dict, safe: str) -> Path:
     """成片落到哪儿：留空就放 output/；指定了本地文件夹就在里面建一个「剧名_时间」子文件夹。
 
@@ -658,6 +670,24 @@ def _alloc_items(items: list, total: int | None) -> list[tuple[dict, int]]:
     return [(it, max(1, min(20, int(it.get("count") or 1)))) for it in items]
 
 
+@app.post("/api/name/preview")
+def name_preview(body: dict = Body(...)):
+    """命名模板实时预览。
+
+    只做格式化，不查磁盘——真实导出遇到同名会自动往后顺延，这里不假装知道。
+    前后端共用这一份规则，避免界面预览和实际文件名对不上。
+    """
+    tpl = str(body.get("name_tpl") or "").strip()
+    if not tpl:
+        return {"ok": True, "empty": True, "names": []}
+    try:
+        r = naming.preview(tpl, body.get("count") or 3)
+    except naming.NameTemplateError as e:
+        return {"ok": False, "msg": str(e)}
+    r["ok"] = True
+    return r
+
+
 @app.post("/api/render")
 def render(body: dict = Body(...)):
     with LOCK:
@@ -668,16 +698,22 @@ def render(body: dict = Body(...)):
         raise HTTPException(400, "先生成顺剪方案")
     title = (body.get("title") or p["name"]).strip()
     safe = _safe_name(title)
+    tpl = _name_tpl(body)
     outdir = _out_dir(body, safe)
-    out = outdir / f"{safe}.mp4"
-    if out.exists():
-        out = outdir / f"{safe}_{random.randint(1, 999)}.mp4"
+    if tpl:
+        # 模板模式：末尾数字就是起始序号；同名文件由 Namer 顺延，不覆盖旧成片
+        out = naming.Namer(outdir, tpl).next()
+    else:
+        out = outdir / f"{safe}.mp4"
+        if out.exists():
+            out = outdir / f"{safe}_{random.randint(1, 999)}.mp4"
     opts = _pack_opts(body, title)
     _job_start("render")
 
     def work():
         r = rendermod.render(p, pl, str(out), opts, _job_emit)
         r["dir"] = str(outdir)
+        r["name"] = out.name
         return r
 
     _bg(work)
@@ -713,7 +749,9 @@ def batch(body: dict = Body(...)):
     tm, tf = _to_tail(body)
     title = (body.get("title") or p["name"]).strip()
     safe = _safe_name(title)
+    tpl = _name_tpl(body)
     outdir = _out_dir(body, safe)
+    namer = naming.Namer(outdir, tpl) if tpl else None
     opts = _pack_opts(body, title)
 
     jobs = []
@@ -759,18 +797,26 @@ def batch(body: dict = Body(...)):
             planmod.restat(p, pl)
             with LOCK:
                 STATE["plan"] = pl
-            out = outdir / f"{safe}_开头{hi:02d}_{k:02d}.mp4"
+            # 序号按「实际开始渲染」的顺序发：方案排不出来的那条不占号，
+            # 渲染阶段失败的那条占号作废（不回收），避免复用号撞上残留半成品
+            out = namer.next() if namer else outdir / f"{safe}_开头{hi:02d}_{k:02d}.mp4"
 
             def emit(pct: float, msg: str, _idx=idx, _hi=hi, _k=k, _n=n):
                 _job_emit((_idx + max(0.0, min(100.0, pct)) / 100.0) / total_jobs * 100.0,
                           f"开头{_hi} · 第{_k}/{_n}条 · {msg}")
 
-            r = rendermod.render(p, pl, str(out), opts, emit)
+            try:
+                r = rendermod.render(p, pl, str(out), opts, emit)
+            except Exception as e:  # noqa: BLE001  单条渲染失败，别把整批带下去
+                errors.append({"hook": hi, "copy": k, "msg": f"渲染失败：{e}"})
+                print(f"[batch] 开头{hi} 第{k}条 渲染失败：{e}", flush=True)
+                continue
             # 指定的结尾若离目标时长太远会被引擎退回自动，这里按实际落点如实标注
             to_g1 = float((pl.get("to") or {}).get("g1") or 0)
             spec_used = bool(eh_k) and abs(to_g1 - eh_k["g1"]) < 0.5
             results.append({"video": r["video"], "duration": r["duration"],
                             "size_mb": r["size_mb"], "hook": hi, "copy": k,
+                            "name": out.name,
                             "from": pl.get("from"), "to": pl.get("to"),
                             "end_reason": pl.get("end_reason"),
                             "end_spec": spec_used})

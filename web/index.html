@@ -318,6 +318,14 @@
                 title="打开文件夹选择器，选一个保存成片的目录">选文件夹</button>
               <button type="button" class="btn xs ghost" id="btnOpenDir" hidden>打开</button>
             </div>
+            <div class="brow namerow">
+              <input id="bNameTpl" class="input" spellcheck="false"
+                     placeholder="文件名格式（可选）例：1110-任金龙-狼人-5451-原切（中）-1"
+                     title="末尾那串数字是序号起点，本批第 1 条用它，之后每导出下一条 +1；数字之前的文字原样保留">
+              <button type="button" class="btn xs ghost" id="btnClearName" hidden
+                title="清空模板，回到「剧名.mp4」的默认命名">清空</button>
+            </div>
+            <div class="nametip" id="bNameTip">留空 = 按剧名命名。填了模板：末尾数字当起始序号，本批逐条 +1，遇到同名文件自动顺延。</div>
             <label class="chk xs" title="默认在所选文件夹里建一个「剧名_时间」子文件夹，多批不混">
               <input type="checkbox" id="bFlat">直接放进所选文件夹（不建子文件夹）
             </label>

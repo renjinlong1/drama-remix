@@ -1,0 +1,117 @@
+{
+  "checks": [
+    {
+      "name": "扫描完成",
+      "ok": true,
+      "detail": "完成"
+    },
+    {
+      "name": "有可用开头候选",
+      "ok": true,
+      "detail": "6"
+    },
+    {
+      "name": "候选带时间区间",
+      "ok": true,
+      "detail": "{'g0': 15.04, 'g1': 30.0, 'dur': 14.96, 'ep': 2, 'text': '滚出去！你算什么东西 董事长来了 亲子鉴定结果出来了 三年后我回来了 这到底是谁 离婚吧，休想 原来是你', 'score': 59.89, 'act': 0.0, 'susp': 5.2, 'at_end': True, 'kind': '台词冲突', 'hits': ['亲子鉴定', '休想', '你算什么东西', '到底', '原来', '是谁'], 'beats': [2, 3], 'types': ['dialog', 'reveal', 'suspense'], 'primary_type': 'dialog', 'primary_label': '台词冲突', 'confidence': 1.0, 'signals': {'dialog': 1.0, 'reveal': 1.0, 'suspense': 1.0, 'motion': 0.0, 'audio': 0.0, 'intensity': 0.0, 'stillness': 1.0, 'position': 0.875}, 'evidence': [{'kind': 'dialog', 'strength': 1.0, 'note': '命中台词：亲子鉴定 / 休想 / 你算什么东西'}, {'kind': 'structure', 'strength': 0.6, 'note': '落在集末'}], 'source': 'dialog', 'has_dialog': True, 'rank_score': 64.46, 'rank_reason': '台词冲突 · 多源印证 · 第2集', 'dedup_key': '2@8', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'id': 0}"
+    },
+    {
+      "name": "第一批完成",
+      "ok": true,
+      "detail": "完成"
+    },
+    {
+      "name": "第一批出 2 条",
+      "ok": true,
+      "detail": "2 条，errors=[]"
+    },
+    {
+      "name": "第一批文件名符合模板",
+      "ok": true,
+      "detail": "['1110-任金龙-狼人-5451-原切（中）-1.mp4', '1110-任金龙-狼人-5451-原切（中）-2.mp4']"
+    },
+    {
+      "name": "第一批文件真实落盘",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第一批大小非零",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第二批出 2 条",
+      "ok": true,
+      "detail": "2"
+    },
+    {
+      "name": "第二批从 -3 续号",
+      "ok": true,
+      "detail": "['1110-任金龙-狼人-5451-原切（中）-3.mp4', '1110-任金龙-狼人-5451-原切（中）-4.mp4']"
+    },
+    {
+      "name": "两批文件名互不重复",
+      "ok": true,
+      "detail": "set()"
+    },
+    {
+      "name": "旧文件未被覆盖",
+      "ok": true,
+      "detail": "第一批文件丢失"
+    },
+    {
+      "name": "第三批出 2 条",
+      "ok": true,
+      "detail": "2"
+    },
+    {
+      "name": "默认命名格式",
+      "ok": true,
+      "detail": "['测试剧_开头01_01.mp4', '测试剧_开头01_02.mp4']"
+    },
+    {
+      "name": "默认命名与模板命名不冲突",
+      "ok": true,
+      "detail": "['测试剧_开头01_01.mp4', '测试剧_开头01_02.mp4']"
+    },
+    {
+      "name": "单条完成",
+      "ok": true,
+      "detail": "完成"
+    },
+    {
+      "name": "单条文件名 = 起始序号",
+      "ok": true,
+      "detail": "单条测试-10.mp4"
+    },
+    {
+      "name": "单条文件落盘",
+      "ok": true,
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_name_tlvnvbwq"
+    },
+    {
+      "name": "非法模板返回 400",
+      "ok": true,
+      "detail": "400"
+    },
+    {
+      "name": "提示说明末尾要数字",
+      "ok": true,
+      "detail": "文件名格式的末尾必须是数字，例如「1110-任金龙-狼人-5451-原切（中）-1」；这个数字就是本批的起始序号"
+    },
+    {
+      "name": "非法模板没有启动任务",
+      "ok": true,
+      "detail": "done"
+    },
+    {
+      "name": "目录文件数与预期一致",
+      "ok": true,
+      "detail": "['1110-任金龙-狼人-5451-原切（中）-1.mp4', '1110-任金龙-狼人-5451-原切（中）-2.mp4', '1110-任金龙-狼人-5451-原切（中）-3.mp4', '1110-任金龙-狼人-5451-原切（中）-4.mp4', '单条测试-10.mp4', '测试剧_开头01_01.mp4', '测试剧_开头01_02.mp4']"
+    }
+  ],
+  "total": 22,
+  "failed": 0,
+  "time": "2026-11-10 15:00:17"
+}
