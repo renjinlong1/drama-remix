@@ -136,12 +136,9 @@
         <span class="hint">点卡片设为开头 · 悬停 ‹ › 前后挪位置 · 右下 ×N 定条数 · ✕ 删掉</span>
       </div>
       <div class="hkbar">
-        <div class="seg" id="hkFilter">
-          <button data-f="all" class="on">全部</button>
-          <button data-f="act">动作冲突</button>
-          <button data-f="talk">台词冲突</button>
-        </div>
+        <div class="seg hkseg" id="hkFilter"></div>
         <span class="spacer"></span>
+        <button class="btn xs ghost" id="btnHookPrefs" title="按类型开关、调权重，控制候选的显示优先级（只影响本机浏览，不改变识别与出片）">类型设置</button>
         <button class="btn xs ghost" id="btnShuffleHooks" title="同一部剧也能换一批高光开头候选：评分抖动 ±8%，好开头依然排前面，但入选的那 18 条会换掉 10 条上下。种子写进项目，下次打开还是这一批">换一批</button>
         <button class="btn xs ghost" id="btnAddHook">＋ 手动加</button>
         <button class="btn xs ghost" id="btnResetHooks" hidden title="清掉人工删除与位置微调，回到自动识别的结果">恢复原样</button>
@@ -371,6 +368,36 @@
       <button class="icobtn" id="diagClose">×</button>
     </div>
     <div class="mb" id="diagBody"></div>
+  </div>
+</div>
+
+<div class="modal" id="hookPrefsModal">
+  <div class="mbox">
+    <div class="mh">
+      <h3>钩子类型设置</h3>
+      <button class="icobtn" id="hookPrefsClose">×</button>
+    </div>
+    <div class="mb">
+      <div class="hint" style="margin-bottom:10px;line-height:1.7">
+        关闭的类型不显示在候选面板；权重只改变本机浏览时的先后顺序（100% = 原顺序）。
+        两项都<b>不改变</b>识别结果、剪辑方案与已设的批量出片条数。
+      </div>
+      <div id="hookPrefsList"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button class="btn sm ghost" id="hookPrefsReset">恢复默认</button>
+        <button class="btn sm" id="hookPrefsDone">完成</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="hookInfoModal">
+  <div class="mbox">
+    <div class="mh">
+      <h3 id="hookInfoTitle">为什么算高光</h3>
+      <button class="icobtn" id="hookInfoClose">×</button>
+    </div>
+    <div class="mb" id="hookInfoBody"></div>
   </div>
 </div>
 

@@ -11,6 +11,7 @@ const S = {
   view: { t0: 0, t1: 1 }, hover: -1, drag: null, moved: 0,
   logo: '', overlay: '', endframe: '',
   batch: {}, batchEnd: {}, bendCands: {}, hkHide: new Set(), hkAdd: [], hkFilter: 'all',
+  hkPrefs: { enabled: {}, weight: {} },
   hkShift: {}, endShift: {},
   batchAlloc: 'total', batchTotal: 20, outdir: '',
   target: 360, lead: 1, tailMode: 'auto', tailFixed: 2, efVideoDur: 0, jobTimer: null, saveTimer: null,
@@ -176,6 +177,7 @@ function applyProject(d) {
   S.hkHide = new Set(); S.hkAdd = []; S.hkFilter = 'all';
   S.hkShift = {}; S.endShift = {};
   loadHkEdits();
+  loadHookPrefs();
   S.view = { t0: 0, t1: Math.max(1, S.total) };
   $('#projName').value = S.name;
   // 换项目时把跟着旧项目走的字段刷新掉，避免串戏
@@ -471,22 +473,169 @@ function hookAll() {
   });
 }
 
-const HK_ACT_KINDS = ['动作冲突', '爆发点'];
+/* ── 钩子类型：筛选 / 开关 / 权重 / 证据 ─────────────────────────── */
+const HK_TYPES = [
+  { key: 'energy',      label: '高能画面', group: 'visual' },
+  { key: 'action',      label: '动作冲突', group: 'visual' },
+  { key: 'tension',     label: '情感张力', group: 'visual' },
+  { key: 'performance', label: '戏点张力', group: 'visual' },
+  { key: 'dialog',      label: '台词冲突', group: 'talk' },
+  { key: 'reveal',      label: '身份反转', group: 'talk' },
+  { key: 'suspense',    label: '悬念留扣', group: 'talk' },
+];
+const HK_TYPE_MAP = {};
+HK_TYPES.forEach((t) => { HK_TYPE_MAP[t.key] = t; });
+// 旧项目 / 老候选没有 primary_type 时按旧 kind 回退，界面不会开天窗
+const HK_KIND_FALLBACK = {
+  '动作冲突': 'action', '爆发点': 'action', '台词冲突': 'dialog',
+  '身份反转': 'reveal', '悬念留扣': 'suspense', '剧情节点': 'performance',
+};
+const HK_PREF_KEY = 'dc_hookprefs';
+
+function hookType(h) {
+  if (h.manual) return 'manual';
+  return HK_TYPE_MAP[h.primary_type] ? h.primary_type : (HK_KIND_FALLBACK[h.kind] || 'dialog');
+}
+
+function hookMatchFilter(h, f) {
+  if (f === 'all') return true;
+  const meta = HK_TYPE_MAP[hookType(h)];
+  if (f === 'visual') return !!meta && meta.group === 'visual';
+  if (f === 'talk') return !!meta && meta.group === 'talk';
+  return hookType(h) === f;
+}
+
+function loadHookPrefs() {
+  try {
+    const d = JSON.parse(localStorage.getItem(HK_PREF_KEY) || '{}');
+    S.hkPrefs = { enabled: d.enabled || {}, weight: d.weight || {} };
+  } catch (e) { S.hkPrefs = { enabled: {}, weight: {} }; }
+}
+function saveHookPrefs() {
+  try { localStorage.setItem(HK_PREF_KEY, JSON.stringify(S.hkPrefs)); }
+  catch (e) { /* 隐私模式：只影响本次会话 */ }
+}
+function hookPrefEnabled(t) { return S.hkPrefs.enabled[t] !== false; }
+function hookPrefWeight(t) {
+  const v = Number(S.hkPrefs.weight[t]);
+  return (isFinite(v) && v >= 0 ? v : 100) / 100;
+}
 
 function hookShown() {
-  const f = S.hkFilter;
-  if (f === 'all') return hookAll();
-  return hookAll().filter((h) => {
-    if (h.manual) return true;       // 自己加的，筛选时也别藏起来
-    const isAct = HK_ACT_KINDS.indexOf(h.kind) >= 0;
-    return f === 'act' ? isAct : !isAct;
+  const kept = [];
+  hookAll().forEach((h, i) => {
+    if (h.manual) { kept.push({ h: h, i: i, w: 1e9 }); return; }  // 手动加的永远排最前
+    const t = hookType(h);
+    if (!hookPrefEnabled(t) || !hookMatchFilter(h, S.hkFilter)) return;
+    const base = Number(h.rank_score) || Number(h.score) || 0;
+    kept.push({ h: h, i: i, w: base * hookPrefWeight(t) });
   });
+  kept.sort((a, b) => b.w - a.w || a.i - b.i);   // 同权重保持原顺序，稳定可预期
+  return kept.map((x) => x.h);
 }
 
-function hookKindClass(kind) {
-  if (kind === '手动') return 'k-man';
-  return HK_ACT_KINDS.indexOf(kind) >= 0 ? 'k-act' : 'k-talk';
+function hookKindClass(h) {
+  if (h.manual) return 'k-man';
+  const meta = HK_TYPE_MAP[hookType(h)];
+  return meta && meta.group === 'visual' ? 'k-act' : 'k-talk';
 }
+
+function renderHookFilter() {
+  const box = $('#hkFilter');
+  if (!box) return;
+  const scroll = box.scrollLeft;
+  const present = {};
+  hookAll().forEach((h) => { if (!h.manual) present[hookType(h)] = true; });
+  const items = [{ f: 'all', label: '全部' }, { f: 'visual', label: '画面' },
+                 { f: 'talk', label: '台词' }];
+  const extras = HK_TYPES.filter((t) => present[t.key])
+                         .map((t) => ({ f: t.key, label: t.label }));
+  if (extras.length) items.push({ sep: true });
+  extras.forEach((x) => items.push(x));
+  if (S.hkFilter !== 'all' && !items.some((x) => x.f === S.hkFilter)) S.hkFilter = 'all';
+  box.innerHTML = items.map((x) => x.sep ? '<i class="fsep"></i>'
+    : '<button data-f="' + x.f + '" class="' + (S.hkFilter === x.f ? 'on' : '') + '">' +
+      esc(x.label) + '</button>').join('');
+  $$('#hkFilter button').forEach((b) => {
+    b.onclick = () => { S.hkFilter = b.dataset.f; renderHookFilter(); renderHooks(); };
+  });
+  box.scrollLeft = scroll;
+}
+
+const HK_SIG_NAMES = {
+  dialog: '台词', reveal: '身份', suspense: '悬念', motion: '画面运动',
+  audio: '声音', intensity: '冲击强度', stillness: '静态张力', position: '位置',
+};
+
+function openHookInfo(h) {
+  const body = $('#hookInfoBody');
+  $('#hookInfoTitle').textContent = (h.primary_label || h.kind || '剧情节点') +
+    ' · 第 ' + h.ep + ' 集 ' + fmt1(h.g0) + ' → ' + fmt1(h.g1);
+  if (!h.signals || !h.evidence) {
+    body.innerHTML = '<div class="hi-warn">这条候选来自旧版识别结果（或手动添加），' +
+      '没有证据明细。重新导入一次即可生成。</div>';
+  } else {
+    const bars = Object.keys(HK_SIG_NAMES).map((k) => {
+      const v = Number(h.signals[k] || 0);
+      return '<div class="hi-row"><span class="hi-nm">' + HK_SIG_NAMES[k] + '</span>' +
+        '<span class="hi-bar"><i style="width:' + Math.round(v * 100) + '%"></i></span>' +
+        '<span class="hi-v">' + v.toFixed(2) + '</span></div>';
+    }).join('');
+    const ev = (h.evidence || []).map((e) =>
+      '<div class="hi-ev"><b>' + esc(e.kind || '') + '</b><span>' + esc(e.note || '') +
+      '（' + Number(e.strength || 0).toFixed(2) + '）</span></div>').join('');
+    body.innerHTML =
+      '<div class="hi-sec">判定</div>' +
+      '<div class="hi-row"><span class="hi-nm">主类型</span><span>' +
+        esc(h.primary_label || h.kind || '-') + '</span>' +
+        '<span style="margin-left:auto;color:var(--dim)">置信度 ' +
+        Math.round(Number(h.confidence || 0) * 100) + '%</span></div>' +
+      '<div class="hi-row"><span class="hi-nm">全部标签</span><span>' +
+        esc((h.types || []).join(' / ') || '-') + '</span></div>' +
+      '<div class="hi-row"><span class="hi-nm">信号来源</span><span>' +
+        esc(h.source || '-') + '　·　' + (h.has_dialog ? '有台词' : '无台词') + '</span></div>' +
+      '<div class="hi-sec">信号强度</div>' + bars +
+      '<div class="hi-sec">命中证据</div>' + (ev || '<div class="hi-warn">无</div>') +
+      '<div class="hi-sec">排序理由</div><div class="hi-warn">' +
+        esc(h.rank_reason || '-') + '　展示分 ' + Number(h.score || 0).toFixed(1) +
+        ' · 排序分 ' + Number(h.rank_score || 0).toFixed(1) + '</div>';
+  }
+  $('#hookInfoModal').classList.add('on');
+}
+
+function renderHookPrefs() {
+  const box = $('#hookPrefsList');
+  const counts = {};
+  hookAll().forEach((h) => {
+    if (!h.manual) { const t = hookType(h); counts[t] = (counts[t] || 0) + 1; }
+  });
+  box.innerHTML = HK_TYPES.map((t) => {
+    const on = hookPrefEnabled(t.key);
+    const w = Math.round(hookPrefWeight(t.key) * 100);
+    return '<div class="hi-pref" data-t="' + t.key + '">' +
+      '<label><input type="checkbox" class="hi-en" ' + (on ? 'checked' : '') + '>' +
+        esc(t.label) + '</label>' +
+      '<input type="range" class="hi-w" min="0" max="200" step="10" value="' + w + '">' +
+      '<span class="hi-pv">' + w + '%</span><span class="hi-pc">' +
+        (counts[t.key] || 0) + ' 条</span></div>';
+  }).join('');
+  $$('#hookPrefsList .hi-pref').forEach((row) => {
+    const t = row.dataset.t;
+    const en = row.querySelector('.hi-en');
+    const rg = row.querySelector('.hi-w');
+    en.onchange = () => {
+      S.hkPrefs.enabled[t] = en.checked;
+      saveHookPrefs(); renderHookPrefs(); renderHooks();
+    };
+    rg.oninput = () => {
+      S.hkPrefs.weight[t] = Number(rg.value);
+      row.querySelector('.hi-pv').textContent = rg.value + '%';
+      saveHookPrefs();
+    };
+    rg.onchange = () => renderHooks();
+  });
+}
+function openHookPrefs() { renderHookPrefs(); $('#hookPrefsModal').classList.add('on'); }
 
 /* 已设条数的开头，按候选面板顺序排（分数高的在前），总数不够分时好开头优先 */
 function batchItems() {
@@ -701,6 +850,7 @@ function thumbT(h) {
 }
 
 function renderHooks() {
+  renderHookFilter();
   const box = $('#hooks');
   const all = hookAll();
   const shown = hookShown();
@@ -711,7 +861,7 @@ function renderHooks() {
     return;
   }
   if (!shown.length) {
-    box.innerHTML = '<div class="empty">这个筛选下没有候选，切到「全部」看看</div>';
+    box.innerHTML = '<div class="empty">这个筛选下没有候选。切到「全部」，或在「类型设置」里重新启用被关掉的类型</div>';
     return;
   }
   box.innerHTML = shown.map((h, i) => {
@@ -727,7 +877,8 @@ function renderHooks() {
       (h.visual_only ? '无台词 · 画面钩子' : '');
     return '<div class="' + cls + '" data-i="' + i + '">' +
       '<i class="hdel" title="从候选里删除">✕</i>' +
-      '<span class="hkind ' + hookKindClass(kind) + '">' + esc(kind) + '</span>' +
+      '<i class="hi-ico" title="为什么算高光（证据与信号）">?</i>' +
+      '<span class="hkind ' + hookKindClass(h) + '">' + esc(kind) + '</span>' +
       '<div class="hmv">' +
         '<i class="mvl" title="前移 0.5 秒（按住 Shift 挪 2 秒）">‹</i>' +
         '<i class="mvr" title="后移 0.5 秒（按住 Shift 挪 2 秒）">›</i></div>' +
@@ -747,6 +898,12 @@ function renderHooks() {
   }).join('');
   $$('#hooks .hook').forEach((el) => {
     el.onclick = () => selectHook(shown[Number(el.dataset.i)]);
+  });
+  $$('#hooks .hi-ico').forEach((el) => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      openHookInfo(shown[Number(el.parentElement.dataset.i)]);
+    };
   });
   $$('#hooks .hmv i').forEach((el) => {
     el.onclick = (e) => {
@@ -2530,12 +2687,25 @@ $$('#rTabs .rtab').forEach((b) => { b.onclick = () => setRTab(b.dataset.t); });
 syncTabDots();
 try { setRTab(localStorage.getItem('dc.rTab') || 'plan', false); } catch (e) { setRTab('plan', false); }
 
-$$('#hkFilter button').forEach((b) => {
-  b.onclick = () => {
-    S.hkFilter = b.dataset.f;
-    $$('#hkFilter button').forEach((x) => x.classList.toggle('on', x === b));
-    renderHooks();
-  };
+$('#btnHookPrefs').onclick = openHookPrefs;
+$('#hookPrefsClose').onclick = () => $('#hookPrefsModal').classList.remove('on');
+$('#hookPrefsDone').onclick = () => $('#hookPrefsModal').classList.remove('on');
+$('#hookPrefsReset').onclick = () => {
+  S.hkPrefs = { enabled: {}, weight: {} };
+  saveHookPrefs(); renderHookPrefs(); renderHooks();
+  toast('已恢复默认类型设置');
+};
+$('#hookInfoClose').onclick = () => $('#hookInfoModal').classList.remove('on');
+$('#hookPrefsModal').addEventListener('click', (e) => {
+  if (e.target.id === 'hookPrefsModal') $('#hookPrefsModal').classList.remove('on');
+});
+$('#hookInfoModal').addEventListener('click', (e) => {
+  if (e.target.id === 'hookInfoModal') $('#hookInfoModal').classList.remove('on');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  $('#hookInfoModal').classList.remove('on');
+  $('#hookPrefsModal').classList.remove('on');
 });
 $('#btnResetHooks').onclick = () => resetHooks();
 $('#btnShuffleHooks').onclick = async () => {
