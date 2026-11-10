@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>顺剪工作台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234c8dff'/%3E%3Cpath d='M11 9v14M21 9v14M11 16h10' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div id="verBanner" hidden>界面程序有更新，当前页面还是旧版本（按钮点了没反应多半是这个原因）<button class="btn sm primary" id="verReload">刷新页面</button></div>
+<div class="globalbar" id="globalbar"></div>
+
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="26" height="26"><rect width="32" height="32" rx="8" fill="#4c8dff"/><path d="M11 9v14M21 9v14M11 16h10" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>
+    <div>
+      <div class="bname">顺剪工作台</div>
+      <div class="bsub">原片 → 高光钩子 → 顺剪 → 引流成片</div>
+    </div>
+  </div>
+  <div class="meta" id="meta">
+    <span class="chip ghost">未导入剧目</span>
+  </div>
+  <div class="topacts">
+    <button class="btn ghost" id="btnHelp">使用说明</button>
+    <button class="btn" id="btnImportTop">导入剧集</button>
+  </div>
+</header>
+
+<div class="fwarn" id="folderWarn" hidden>
+  <span class="fwic">!</span>
+  <div class="fwtx"><b>这个项目的原片不在这台电脑上</b><span id="fwPath"></span></div>
+  <a href="javascript:void 0" class="btn xs ghost" id="fwDiag">环境自检</a>
+  <a href="javascript:void 0" class="btn xs ghost" id="fwNew">从本机导入新剧</a>
+</div>
+
+<main class="grid">
+  <!-- 左：导入 + 剧集 -->
+  <aside class="col left">
+    <section class="card">
+      <div class="ch">
+        <h3>导入原片</h3>
+        <span class="hint">分集 + 字幕放同一文件夹</span>
+      </div>
+      <div class="cb">
+        <div class="field">
+          <input id="folder" class="input" placeholder="F:\短剧\某剧全集（含 01.mp4 / 01.srt）">
+          <button class="btn sm ghost" id="btnPick">选择…</button>
+        </div>
+        <div class="field">
+          <input id="projName" class="input" placeholder="剧名（用于文件名）">
+        </div>
+        <button class="btn wide" id="btnScan">扫描并分析</button>
+        <label class="chk"><input type="checkbox" id="ocrChk" checked><span>画面硬字幕识别（OCR）</span></label>
+        <div class="tip">支持 mp4/mkv/mov/avi 等；字幕支持 srt/ass/vtt 自动配对；<b>没有字幕文件时</b>会自动从画面里识别烧进去的字幕（每集约 20 秒，40 集约 10 分钟，可关掉）。<b>识别过的剧重新导入会直接用缓存</b>，不用再跑一遍。</div>
+      </div>
+    </section>
+
+    <section class="card grow">
+      <div class="ch">
+        <h3>剧集 <span class="badge" id="epCount">0</span></h3>
+        <span class="hint" id="subPair">—</span>
+      </div>
+      <div class="cb nopad">
+        <div class="eplist" id="epList">
+          <div class="empty">还没有导入剧集</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="ch"><h3>最近项目</h3>
+        <button class="btn xs ghost rechide" id="btnPurgeMiss" hidden
+          title="清掉源视频已经不在本机的项目（换电脑后带过来的旧存档）">清理失效</button>
+        <button class="btn xs ghost recnew" id="btnNewProj" title="导入一部新剧：选文件夹后走同一套扫描流程">＋ 新建</button>
+      </div>
+      <div class="cb nopad">
+        <div class="recents" id="recents"><div class="empty">暂无</div></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- 中：概览 + 时间轴 + 钩子 -->
+  <section class="col center">
+    <div class="stats" id="stats">
+      <div class="stat"><label>原片总长</label><b>—</b></div>
+      <div class="stat"><label>集数</label><b>—</b></div>
+      <div class="stat"><label>台词句数</label><b>—</b></div>
+      <div class="stat accent"><label>预计成片</label><b>—</b></div>
+    </div>
+
+    <section class="card grow tlcard">
+      <div class="ch">
+        <h3>时间轴</h3>
+        <div class="tltools">
+          <span class="hint" id="zoomLabel">全剧</span>
+          <button class="btn xs ghost on" id="vidFollow" title="原片播放时，时间轴视图自动跟着播放头走">跟随</button>
+          <button class="icobtn" id="zoomOut" title="缩小">−</button>
+          <button class="icobtn" id="zoomIn" title="放大">+</button>
+          <button class="btn xs ghost" id="zoomFit">全剧</button>
+          <button class="btn xs ghost" id="zoomReset">还原方案</button>
+        </div>
+      </div>
+      <div class="cb nopad tlwrap">
+        <div class="tlmain">
+          <canvas id="tl"></canvas>
+          <canvas id="marks" title="全剧标记带：下排金色=开头钩子候选，上排紫色=结尾候选，蓝框=当前查看窗口；点标记直接选用，点空白跳转，右键从原片播放"></canvas>
+        </div>
+        <div class="tlvid" id="tlvid" hidden>
+          <video id="vid" controls playsinline preload="metadata"></video>
+          <div class="vph" id="vidPh" title="点击播放原片（也可以右键时间轴任意位置从那里播）"><div>▶ 点这里播放原片<br><small>或右键时间轴任意位置从那里播</small></div></div>
+          <div class="vlbl" id="vidLbl">原片</div>
+        </div>
+        <div class="tipbox" id="tipbox"></div>
+        <div class="empty tl" id="tlEmpty">
+          <div class="ei">导入剧集后，这里会出现整部剧的台词节拍</div>
+          <div class="ei sub">橙色=开头钩子，蓝色=顺剪范围（连续播放），紫色=结尾；点方块可以挖掉某句。下方标记带把所有钩子/结尾候选标在全剧时间轴上，点标记直接选用。右侧是原片，右键时间轴任意位置从那里播放</div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i class="lg keep"></i>顺剪内</span>
+        <span><i class="lg drop"></i>已挖掉</span>
+        <span><i class="lg hook"></i>开头钩子</span>
+        <span><i class="lg end"></i>结尾</span>
+        <span><i class="lg ep"></i>集边界</span>
+        <span class="spacer"></span>
+        <span id="selInfo">点方块挖掉/恢复某句；拖「目标时长」改变顺剪长度</span>
+        <a href="javascript:void 0" id="lnkDoc" class="lnk" title="检查 ffmpeg、目录权限、源视频是否就位——换电脑后画面出不来先点这里">环境自检</a>
+      </div>
+    </section>
+
+    <section class="card hkcard">
+      <div class="ch">
+        <h3>高光钩子候选<b class="cnt" id="hkCount">—</b></h3>
+        <span class="hint">点卡片设为开头 · 悬停 ‹ › 前后挪位置 · 右下 ×N 定条数 · ✕ 删掉</span>
+      </div>
+      <div class="hkbar">
+        <div class="seg" id="hkFilter">
+          <button data-f="all" class="on">全部</button>
+          <button data-f="act">动作冲突</button>
+          <button data-f="talk">台词冲突</button>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn xs ghost" id="btnShuffleHooks" title="同一部剧也能换一批高光开头候选：评分抖动 ±8%，好开头依然排前面，但入选的那 18 条会换掉 10 条上下。种子写进项目，下次打开还是这一批">换一批</button>
+        <button class="btn xs ghost" id="btnAddHook">＋ 手动加</button>
+        <button class="btn xs ghost" id="btnResetHooks" hidden title="清掉人工删除与位置微调，回到自动识别的结果">恢复原样</button>
+      </div>
+      <div class="addform" id="addForm" hidden>
+        <select id="addEp" class="input" title="第几集"></select>
+        <input id="addT0" class="input" placeholder="开始 90 或 1:30" title="这一集里的第几秒开始">
+        <input id="addT1" class="input" placeholder="结束" title="留空 = 开始 +10 秒">
+        <button class="btn sm" id="addOk">加入</button>
+      </div>
+      <div class="cb nopad">
+        <div class="hooks" id="hooks"><div class="empty">导入剧集后自动生成</div></div>
+      </div>
+    </section>
+
+    <section class="card endcard">
+      <div class="ch">
+        <h3>结尾候选</h3>
+        <span class="hint">顺剪范围附近的落点 · 悬停 ‹ › 前后挪</span>
+        <button class="btn xs ghost" id="btnClearEnd">改回自动择优</button>
+      </div>
+      <div class="cb nopad">
+        <div class="hooks ends" id="ends"><div class="empty">导入剧集后自动生成</div></div>
+      </div>
+      <div class="ch foot"><span class="hint">默认由算法自动挑分最高的落点（优先卡在集末）。这里列出当前顺剪范围附近几个可能的结束点，分数越高越抓人——点一个就强制停在那里，再点一次取消；落点差半秒，用卡片上的 ‹ › 前后挪。</span></div>
+    </section>
+  </section>
+
+  <!-- 右：参数 + 导出 -->
+  <aside class="col right">
+    <section class="card grow rparam">
+      <div class="ch rtabs" id="rTabs">
+        <button class="rtab on" data-t="plan">顺剪设置</button>
+        <button class="rtab" data-t="hook">开头钩子</button>
+        <button class="rtab" data-t="pack">包装</button>
+        <span class="hint" id="rTabHint"></span>
+      </div>
+
+      <div class="cb scroll tabpane" id="panePlan">
+        <label class="lab">目标时长 <b id="tgVal">6.0 分钟</b></label>
+        <input type="range" id="target" min="120" max="480" step="10" value="360" class="rng">
+        <div class="scale"><span>2 分</span><span>4 分</span><span>6 分</span><span>8 分</span></div>
+        <select id="endMode" class="input" title="自动：在目标时长附近挑最抓人的结束点，优先卡在集末">
+          <option value="auto">结尾：自动卡在最抓人的点</option>
+          <option value="point">结尾：用我指定的结尾钩子</option>
+        </select>
+        <select id="tightness" class="input" title="完全连续＝原片顺着播；精剪＝挖掉少量低分水词">
+          <option value="0">节奏：完全连续（原片顺接）</option>
+          <option value="0.08">节奏：轻度精剪</option>
+          <option value="0.16">节奏：紧凑</option>
+        </select>
+        <select id="hookLead" class="input" title="从钩子起点再往前多切几秒：打脸、扇巴掌这些动作常比台词早半秒到两秒出现，提前一点片头才拍得到。改完成片时长会跟着变，预览和出片同步生效">
+          <option value="0">开头入戏：正好从钩子起点切</option>
+          <option value="0.5">开头入戏：提前 0.5 秒</option>
+          <option value="1">开头入戏：提前 1 秒</option>
+          <option value="1.5">开头入戏：提前 1.5 秒</option>
+          <option value="2">开头入戏：提前 2 秒</option>
+          <option value="3">开头入戏：提前 3 秒</option>
+        </select>
+        <select id="tailMode" class="input" title="去尾帧：每集最后常有一张平台片尾卡，切到下一集时会割裂。自动识别＝看末尾画面变化判断哪一截是卡片并切掉，识别不到按 0.8 秒兜底；只切集与集之间，最后一段和结尾视频都不动">
+          <option value="auto">去尾帧：自动识别片尾卡</option>
+          <option value="fixed">去尾帧：固定秒数</option>
+          <option value="off">去尾帧：不去</option>
+        </select>
+        <label class="brow tailfix" id="tailFixRow" hidden>
+          <span class="blab">裁掉</span>
+          <input id="tailFixed" class="input num" type="number" min="0.3" max="6" step="0.1" value="2" title="每一集末尾统一裁掉这么多秒（只作用在集与集的接缝处）">
+          <span class="blab">秒</span>
+        </label>
+        <div class="kv"><span>顺剪区间</span><b id="planSpan">—</b></div>
+        <div class="kv"><span>覆盖集数</span><b id="planEps">—</b></div>
+        <div class="kv"><span>停在</span><b id="planEnd">—</b></div>
+        <div class="kv"><span>占原片</span><b id="keepRatio">—</b></div>
+        <div class="kv"><span>片段数</span><b id="segCount">—</b></div>
+        <div class="kv" id="tailCutRow" hidden><span>去尾帧</span><b id="tailCutVal">—</b></div>
+        <div class="bar"><i id="keepBar"></i></div>
+      </div>
+
+      <div class="cb scroll tabpane" id="paneHook" hidden>
+        <div class="panehead">
+          <span class="hint">从下方候选里挑一个，或直接不设钩子</span>
+          <button class="btn xs ghost" id="btnClearHook">不用钩子</button>
+        </div>
+        <div class="hookbox" id="hookBox">
+          <div class="empty sm">还没设开头钩子</div>
+        </div>
+        <div class="panetip">换开头：在中间「高光钩子候选」里点任意一张卡片；每张卡右下角的 −N+ 是这一批出几条。</div>
+      </div>
+
+      <div class="cb scroll tabpane" id="panePack" hidden>
+        <div class="field"><input id="title" class="input" placeholder="剧名（用于成片文件命名）"></div>
+
+        <div class="upl">
+          <div class="upbox" id="logoBox">
+            <input type="file" id="logoFile" accept="image/*" hidden>
+            <div class="uptxt">平台 logo<span>点击上传 png</span></div>
+          </div>
+          <div class="upbox" id="efBox">
+            <input type="file" id="efFile" accept="image/*,video/mp4,video/quicktime,video/webm,video/x-msvideo" hidden>
+            <div class="uptxt">引导尾帧<span>整屏 png 或 mp4</span></div>
+          </div>
+          <div class="upbox" id="ovBox">
+            <input type="file" id="ovFile" accept="image/*" hidden>
+            <div class="uptxt">包装模板<span>透明 png</span></div>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="numwrap">
+            <span class="pre">尾帧</span>
+            <input id="efDur" class="input num" type="number" min="0.5" max="60" step="0.5" value="2.5" title="引导尾帧停留时长（秒）；上传 mp4 视频尾帧时按视频原时长播放，此项无效">
+            <i>秒</i>
+          </div>
+          <select id="ovOpacity" class="input">
+            <option value="1">模板不透明度 100%</option>
+            <option value="0.85">模板不透明度 85%</option>
+            <option value="0.7">模板不透明度 70%</option>
+            <option value="0.5">模板不透明度 50%</option>
+          </select>
+        </div>
+        <label class="chk" title="默认不叠，保持引导尾帧设计完整；勾上则尾帧也盖包装模板">
+          <input type="checkbox" id="efTemplate">尾帧也叠模板
+        </label>
+        <div class="row2">
+          <select id="logoPos" class="input">
+            <option value="tr">角标：右上</option>
+            <option value="tl">角标：左上</option>
+            <option value="br">角标：右下</option>
+            <option value="bl">角标：左下</option>
+          </select>
+          <select id="size" class="input">
+            <option value="match">分辨率：跟随原片</option>
+            <option value="1080x1920">1080×1920</option>
+            <option value="720x1280">720×1280</option>
+            <option value="1080x1080">1080×1080</option>
+          </select>
+        </div>
+        <div class="row2">
+          <select id="fit" class="input">
+            <option value="crop">画面：裁切铺满</option>
+            <option value="pad">画面：留黑边</option>
+          </select>
+        </div>
+        <div class="prevrow">
+          <button class="btn sm ghost" id="prevEf">预览尾帧</button>
+          <button class="btn sm ghost" id="prevOv">预览模板</button>
+        </div>
+        <div class="prev" id="prev"><span>点上面按钮看尾帧 / 模板效果</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="cb">
+        <button class="btn wide ghost ppbtn" id="btnPreviewOut"
+          title="按当前方案把成片的每一段原片按顺序播一遍：第一帧、每个切点、结尾停的位置都和出片完全一致（不转码，点开就能看）">预览成品（不出片）</button>
+        <button class="btn wide primary" id="btnRender">开始顺剪出片</button>
+        <div class="brow cntrow">
+          <span class="blab">出片数量</span>
+          <div class="seg" id="bAlloc">
+            <button data-a="total" class="on" title="设定本批总共出多少条，自动分到各个开头">按总数</button>
+            <button data-a="card" title="每张卡片右下 ×N 设几条就出几条">按卡片</button>
+          </div>
+          <input id="bTotal" class="input num" type="number" min="1" max="200" value="20" title="手动输入本批总共出多少条成片（1-200）">
+          <span class="bplan" id="bPlan"></span>
+        </div>
+        <div class="bline" id="batchLine" hidden></div>
+        <div class="prog"><i id="progBar"></i></div>
+        <div class="pmsg" id="pmsg">等待开始</div>
+        <details class="expopts">
+          <summary>保存位置等设置</summary>
+          <div class="expbody">
+            <div class="brow">
+              <input id="bDir" class="input" spellcheck="false"
+                     placeholder="留空 = 项目 output 文件夹" title="成片保存到哪个文件夹">
+              <button class="btn xs ghost" id="btnPickDir">选文件夹</button>
+              <button class="btn xs ghost" id="btnOpenDir" hidden>打开</button>
+            </div>
+            <label class="chk xs" title="默认在所选文件夹里建一个「剧名_时间」子文件夹，多批不混">
+              <input type="checkbox" id="bFlat">直接放进所选文件夹（不建子文件夹）
+            </label>
+          </div>
+        </details>
+        <div class="out" id="out"></div>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<div class="modal" id="helpModal">
+  <div class="mbox">
+    <div class="mh"><h3>三步出片</h3><button class="icobtn" id="helpClose">×</button></div>
+    <div class="mb">
+      <ol>
+        <li><b>导入</b>：把一部剧的所有分集和字幕放在一个文件夹，粘贴路径（或点「选择…」），填剧名，点「扫描并分析」。工具会读台词、切节拍、算冲突分。</li>
+        <li><b>选钩子</b>：右侧「高光钩子候选」一次给出 <b>15-20 个</b>片段，按抓人程度排序，每张卡左上角标着它是哪种高光——<b>动作冲突</b>（扇巴掌、泼酒、摔杯子、推人、当众下跪这类动手镜头）、<b>爆发点</b>（哭喊、重音、情绪炸开）、<b>台词冲突</b>（打脸、退婚、滚出去）、<b>身份反转</b>、<b>悬念留扣</b>。点一个就作为开头。位置差半秒就这样修：鼠标移到卡片上，缩略图左右的 <b>‹ ›</b> 把整段往前 / 往后挪 0.5 秒（按住 <b>Shift</b> 挪 2 秒），最多贴到集首/集尾，挪完时间精确到 0.1 秒并标出挪了多少；结尾候选同样能挪，选中后挪也照样是选中状态。不想要的按卡片右上角 <b>✕</b> 从候选里删掉（点「恢复原样」能找回来，挪过的位置也一并还原）；识别漏了的好镜头，点「<b>＋ 手动加</b>」，选集数、填起止秒数（支持 1:30 这种写法）就能自己加一条。顶上的「全部 / 动作冲突 / 台词冲突」可以筛着看。也可以不设钩子，直接从头顺剪。</li>
+        <li><b>定结尾</b>：默认由算法在目标时长附近挑最好的结束点——优先卡在某一集结尾（短剧每集末尾本来就埋着钩子），其次看这句话本身有没有悬念。想强制停在某处，就到「结尾钩子候选」点一个，再点一次取消。</li>
+        <li><b>调与出片</b>：拖「目标时长」定在 3-8 分钟，顺剪区间和结束位置会实时更新；时间轴上点方块可以把某句挖掉（再点恢复）；填好剧名、logo、App 名和引导语，点「开始顺剪出片」。<b>出片前先点「预览成品（不出片）」</b>：按当前方案把每段原片按顺序播一遍，开头第一帧、每个切点、收尾停的位置、尾帧停多久都和成片一致，不用等转码。如果扇巴掌、下跪这些动作比台词早出现，把「顺剪设置」里的 <b>开头入戏</b> 调大（默认提前 1 秒），预览和成片会一起往前挪。<b>去尾帧</b>（默认自动识别）会把每集末尾的平台片尾卡切掉，免得集与集之间割裂——识别不到按 0.8 秒兜底，也可以改「固定秒数」或「不去」；它只切集与集的接缝，成片最后一段和你上传的引导尾帧都不动。</li>
+      </ol>
+      <p class="note">顺剪逻辑：<b>开头钩子 → 从这一集这段往后连续顺接（第 1 集剩余 → 第 2 集 → 第 3 集 → 第 4 集……）→ 时长够了就停在最抓人的地方 → 引导尾帧</b>。正片是连续播放的，不按台词挑镜头——剧本里没有台词的那几十秒往往正是剧情在演。结束点会自动打分：集末卡点加分最多，其次是句子本身带悬念（没回答的问句、真相、你等着…），再减去离目标时长的偏差。如果某集结尾本身就是个好卡点，成片就停在那里。</p>
+      <p class="note"><b>批量产出</b>：在每个高光开头卡片右下用「− N +」设定要出几条，选好多个开头后点「开始批量出片」。同一开头的第 1 条是标准方案，第 2 条起会换一个结尾候选、再剪几处较长的空镜，时长仍贴近目标——结构一致但画面确实不同，降低平台查重风险。想亲手定结尾，点出片数量下面那行的「<b>指定每条的结尾…</b>」：每个开头、每条成片都有一个下拉框，可以从这个开头能用的结尾候选里挑一个（也有「按候选顺序分配」一键铺开），保存后出片就精确停在那个点。包装、文案对所有条目相同。出片命名：剧名_开头01_02.mp4。</p>
+      <p class="note">原声保留并统一到 -16 LUFS。成片只有三段：<b>开头钩子 → 连续正片 → 引导尾帧</b>，不再生成片头剧名卡和结尾追更卡，要加的剧名、logo、追更引导都放在你自己的「引导尾帧」和「包装模板」里。上传「引导尾帧」后会在片尾播放——传 png 按设定秒数停留，传做好的 mp4 则按视频原时长整段播放并保留其声音（「尾帧 __ 秒」只对图片生效）；「包装模板」是全屏透明 png，会整片叠加，可调不透明度。</p>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="dirModal">
+  <div class="mbox dirbox">
+    <div class="mh">
+      <h3 id="dirTitle">选择剧集文件夹</h3>
+      <button class="icobtn" id="dirClose">×</button>
+    </div>
+    <div class="dirbar">
+      <button class="btn sm ghost" id="dirUp" title="上一级">↑ 上级</button>
+      <input id="dirPath" class="input" placeholder="可直接粘贴路径后回车" spellcheck="false">
+    </div>
+    <div class="dirlist" id="dirList"><div class="empty">加载中…</div></div>
+    <div class="dirfoot">
+      <span class="hint" id="dirHint">进入文件夹后点「选这个」</span>
+      <button class="btn" id="dirOk">选这个</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="diagModal">
+  <div class="mbox">
+    <div class="mh">
+      <h3>运行环境自检</h3>
+      <button class="icobtn" id="diagClose">×</button>
+    </div>
+    <div class="mb" id="diagBody"></div>
+  </div>
+</div>
+
+<div class="modal" id="pvModal">
+  <div class="mbox pvbox">
+    <div class="mh">
+      <h3 id="pvTitle">预览</h3>
+      <button class="icobtn" id="pvClose">×</button>
+    </div>
+    <video id="pvVideo" controls playsinline preload="metadata"></video>
+    <div class="pvfoot">
+      <span class="hint" id="pvInfo"></span>
+      <button class="btn sm ghost" id="pvBack" title="再往前多看 1.5 秒，确认动作有没有在钩子起点之前">多看前 1.5 秒</button>
+      <button class="btn sm ghost" id="pvAgain" title="从这一段的开头（收尾前的铺垫）重看一遍">重看一遍</button>
+      <button class="btn sm ghost" id="pvLoop">循环播放</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="ppModal">
+  <div class="mbox ppbox">
+    <div class="mh">
+      <h3>成品预览<span class="ppsub" id="ppNote">按当前方案逐段播放原片</span></h3>
+      <button class="icobtn" id="ppClose">×</button>
+    </div>
+    <div class="ppstage">
+      <div class="ppvwrap" id="ppWrap">
+        <video id="ppVideo" controls playsinline preload="auto"></video>
+        <img id="ppOverlay" class="ppo" alt="" hidden>
+        <img id="ppLogo" class="ppl" alt="" hidden>
+        <img id="ppTail" class="ppt" alt="" hidden>
+      </div>
+      <div class="ppload" id="ppLoad" hidden><i class="impring"></i><span id="ppLoadTxt">正在载入…</span></div>
+    </div>
+    <div class="ppstrip" id="ppStrip"></div>
+    <div class="pvfoot">
+      <span class="hint" id="ppInfo">—</span>
+      <button class="btn sm ghost" id="ppHint" title="预览用的是原片本身，画质、音量归一以实际出片为准">说明</button>
+      <button class="btn sm ghost" id="ppReplay">从头播</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="bendModal">
+  <div class="mbox bendbox">
+    <div class="mh">
+      <h3>批量结尾指定<span class="ppsub" id="bendSub"></span></h3>
+      <button class="icobtn" id="bendClose">×</button>
+    </div>
+    <div class="mb" id="bendBody"></div>
+    <div class="pvfoot">
+      <span class="hint" id="bendHint">先用眼睛选：<b>点候选画面</b>看视频（往前 10 秒铺垫 + 停点后 1.5 秒），<b>点候选下面的数字</b>把对应条指定到这个结尾（再点一次取消）；「自动」＝第 1 条用标准方案、第 2 条起轮换别的结尾候选；选了具体候选就精确卡到那里（离目标时长太远时仍会退回自动并在结果里注明）</span>
+      <button class="btn sm ghost" id="bendClear">全部恢复自动</button>
+    </div>
+  </div>
+</div>
+
+<div class="impmask" id="impMask" hidden>
+  <div class="impbox">
+    <div class="impring"></div>
+    <div class="impt">正在导入「<b id="impName">新剧</b>」</div>
+    <div class="imps" id="impSub">扫描分集 → 配对字幕 / 识别画面台词 → 分析剧情</div>
+    <div class="impnote">集数多、又要识别画面字幕时会跑十几分钟；这个窗口会一直显示到导入完成</div>
+  </div>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

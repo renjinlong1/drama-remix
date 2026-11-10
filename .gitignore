@@ -1,0 +1,25 @@
+# 运行时与二进制：体积大、不由本人维护，留在磁盘但不进仓库
+runtime/
+bin/
+
+# 用户数据：单独备份，绝不提交
+projects/
+data/
+output/
+samples/
+
+# 临时产物
+__pycache__/
+*.py[cod]
+*.json.bak
+*.log
+Thumbs.db
+.DS_Store
+
+# 发布包（由「打包发布.bat」生成）
+*.zip
+
+# 回归样片等本地大文件
+*.mp4
+*.mkv
+*.mov
