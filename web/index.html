@@ -489,6 +489,26 @@
   </div>
 </div>
 
+<script>
+/* 「清空」按钮的兜底：如果浏览器加载的是旧版 app.js（没有绑定这个按钮），
+   这里仍能把文件名格式清干净。新版脚本会设置 __nameTplBound，届时本段直接让位。 */
+(function () {
+  var btn = document.getElementById('btnClearName');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    if (window.__nameTplBound) return;
+    var inp = document.getElementById('bNameTpl');
+    if (inp) { inp.value = ''; try { inp.focus(); } catch (e) {} }
+    btn.hidden = true;
+    try { localStorage.removeItem('dc.nameTpl'); } catch (e) {}
+    var tip = document.getElementById('bNameTip');
+    if (tip) {
+      tip.className = 'nametip';
+      tip.textContent = '留空 = 按剧名命名。填了模板：末尾数字当起始序号，本批逐条 +1，遇到同名文件自动顺延。';
+    }
+  });
+})();
+</script>
 <script src="/assets/app.js"></script>
 </body>
 </html>

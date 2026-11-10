@@ -1,5 +1,8 @@
 'use strict';
 
+/* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
+window.__APP_BUILD__ = '2026-11-10.2';
+
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -2741,25 +2744,31 @@ $('#btnOpenDir').onclick = () => {
 /* ── 文件名格式：末尾数字是起始序号，前面原样保留 ──────────
    预览走后端同一个解析函数，避免界面写一套、导出写另一套。 */
 let nameTplTimer = null;
+let nameTplSeq = 0;          // 预览请求序号：慢响应回来时丢掉，避免覆盖刚清空的提示
+const NAME_TIP_EMPTY = '留空 = 按剧名命名。填了模板：末尾数字当起始序号，本批逐条 +1，遇到同名文件自动顺延。';
+
 function nameTplTip(html, bad) {
   const el = $('#bNameTip');
   el.className = 'nametip' + (bad ? ' bad' : '');
   el.innerHTML = html;
 }
 async function nameTplPreview() {
+  const seq = ++nameTplSeq;
   const tpl = String(S.nameTpl || '').trim();
   if (!tpl) {
-    nameTplTip('留空 = 按剧名命名。填了模板：末尾数字当起始序号，本批逐条 +1，遇到同名文件自动顺延。');
+    nameTplTip(NAME_TIP_EMPTY);
     return;
   }
   try {
     const r = await api('/api/name/preview', { name_tpl: tpl, count: 3 });
+    if (seq !== nameTplSeq) return;          // 已有更新的输入/清空，丢弃这次结果
     if (!r.ok) { nameTplTip(esc(r.msg || '文件名格式不对'), true); return; }
     const first = (r.names || [])[0] || '';
     nameTplTip('本批首个文件：<span class="nt-name">' + esc(first) + '</span>' +
       '<br>序号起点 <b>' + r.start + '</b>，逐条 +1；同名自动顺延，不覆盖旧成片。' +
       ($('#bFlat').checked ? '' : '要跨批接着编号，勾选下方「直接放进所选文件夹」。'));
   } catch (e) {
+    if (seq !== nameTplSeq) return;
     nameTplTip(esc(e.message), true);
   }
 }
@@ -2775,15 +2784,47 @@ function setNameTpl(v, save) {
   }
   nameTplPreview();
 }
+
+/* 清空文件命名格式：不读输入框、不依赖 state 判断，点一次就一定清空。
+   顺带取消未执行的防抖定时器、递增预览序号，避免旧的 blur/预览请求把内容或提示写回来。 */
+function clearNameTpl() {
+  clearTimeout(nameTplTimer);
+  nameTplTimer = null;
+  nameTplSeq++;
+  S.nameTpl = '';
+  const inp = $('#bNameTpl');
+  if (inp) inp.value = '';
+  const btn = $('#btnClearName');
+  if (btn) btn.hidden = true;
+  try { localStorage.removeItem('dc.nameTpl'); } catch (x) { /* 隐私模式忽略 */ }
+  nameTplTip(NAME_TIP_EMPTY);
+  try { if (inp) inp.focus(); } catch (x) { /* 老浏览器忽略 */ }
+}
+window.__nameTplBound = true;   // 给 index.html 的旧脚本兜底用：新 JS 已接管这个按钮
+
 $('#bNameTpl').oninput = (e) => {
   S.nameTpl = e.target.value;
   $('#btnClearName').hidden = !S.nameTpl.trim();
   clearTimeout(nameTplTimer);
   nameTplTimer = setTimeout(() => setNameTpl(e.target.value), 350);
 };
-$('#bNameTpl').onblur = (e) => setNameTpl(e.target.value);
-$('#bNameTpl').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } };
-$('#btnClearName').onclick = () => { setNameTpl(''); toast('已清空命名格式，回到按剧名命名'); };
+$('#bNameTpl').onblur = (e) => {
+  // 值没变就不重复提交：清空后失焦不会再把空模板送回预览
+  if (String(e.target.value || '').trim() === S.nameTpl) return;
+  setNameTpl(e.target.value);
+};
+$('#bNameTpl').onkeydown = (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); clearNameTpl(); toast('已清空命名格式'); return; }
+  if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+};
+// 按下就阻止默认：按钮不抢输入框焦点，blur 不会先于 click 触发
+$('#btnClearName').onmousedown = (e) => e.preventDefault();
+$('#btnClearName').onclick = (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  clearNameTpl();
+  toast('已清空命名格式，回到按剧名命名');
+};
 try {
   S.outdir = localStorage.getItem('dc.outDir') || '';
   S.nameTpl = localStorage.getItem('dc.nameTpl') || '';
@@ -2987,7 +3028,10 @@ function verSelfCheck(serverVer) {
   const tag = document.querySelector('script[src*="app.js"]');
   const m = tag && tag.src ? tag.src.match(/[?&]v=(\d+)/) : null;
   const mine = m ? m[1] : '';
-  if (serverVer && mine && serverVer !== mine) $('#verBanner').hidden = false;
+  if (!serverVer) return;
+  // mine 为空说明脚本地址没带版本号（多半是老进程/老页面）——这种情况更容易
+  // 命中浏览器缓存里的旧 JS，必须提示刷新，不能像以前那样直接跳过。
+  if (!mine || serverVer !== mine) $('#verBanner').hidden = false;
 }
 setInterval(async () => {
   try { verSelfCheck((await api('/api/status', undefined, 'GET')).asset_ver); } catch (e) { /* 掉线时忽略 */ }
