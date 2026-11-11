@@ -1,0 +1,72 @@
+{
+  "checks": [
+    {
+      "name": "A 末尾 1.5s 冻结",
+      "ok": true,
+      "detail": "1.59s"
+    },
+    {
+      "name": "A 高置信",
+      "ok": true,
+      "detail": "high"
+    },
+    {
+      "name": "B 末尾 0.6s 冻结仍要裁",
+      "ok": true,
+      "detail": "0.64s"
+    },
+    {
+      "name": "B 置信度 mid",
+      "ok": true,
+      "detail": "mid"
+    },
+    {
+      "name": "C 全程运动不裁",
+      "ok": true,
+      "detail": "0.0s/none"
+    },
+    {
+      "name": "D 超长定帧按 4s 上限",
+      "ok": true,
+      "detail": "4.0s"
+    },
+    {
+      "name": "D 低置信",
+      "ok": true,
+      "detail": "low"
+    },
+    {
+      "name": "E 中间静止、末尾在动 → 不裁",
+      "ok": true,
+      "detail": "0.0s/none"
+    },
+    {
+      "name": "F 过短视频不处理",
+      "ok": true,
+      "detail": "0.0s/none"
+    },
+    {
+      "name": "缺失文件不抛异常",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "auto 未识别时不瞎兜底",
+      "ok": true,
+      "detail": "0.0/none"
+    },
+    {
+      "name": "fixed 模式按设定秒数",
+      "ok": true,
+      "detail": "2.0/fixed"
+    },
+    {
+      "name": "off 模式不裁",
+      "ok": true,
+      "detail": "0.0/off"
+    }
+  ],
+  "total": 13,
+  "failed": 0,
+  "time": "2026-11-11 11:49:22"
+}

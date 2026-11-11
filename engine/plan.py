@@ -248,10 +248,14 @@ def _apply_tail_trim(proj: dict, segs: list[dict], tail_mode: str,
         sec, by = tailcard.trim_for(ep.get("path", ""), ep.get("dur", 0.0),
                                     mode, tail_fixed)
         sec = min(sec, max(0.0, s["dur"] - 0.6))   # 别把这一块切没了
-        if beats:
-            # 卡片总是压在没有台词的尾巴上；万一兜底秒数会切进最后一句台词，就停在那里
+        if beats and sec > 0:
+            # 只保护「跨进定帧段」的台词：正片最后一句如果还在说，不能切掉。
+            # 完全落在定帧段内的"台词"通常是卡片上的文字被 OCR 认了出来
+            # （实测片尾卡上的 "TR" 会把裁剪量压成 0），不参与保护。
+            card_start = s["g1"] - sec
             tail_beats = [b for b in beats
-                          if b["ep"] == s["ep"] and s["g0"] < b["g1"] <= s["g1"] + 0.05]
+                          if b["ep"] == s["ep"]
+                          and b["g0"] < card_start < b["g1"] <= s["g1"] + 0.05]
             if tail_beats:
                 sec = min(sec, max(0.0, s["g1"] - max(b["g1"] for b in tail_beats)))
         if sec <= 0.05:
@@ -452,7 +456,7 @@ def build(proj: dict, beats: list[dict], target: float = 360.0,
                vary 优候选、空镜兜底放宽到 2.5 秒——保证同一开头出多条时
                条条不同，而不是靠随机碰运气（随机大多落回同一个结尾）。
     lead:      开头入戏（秒）：钩子起点再往前切这么多，别错过比台词早出现的动作
-    tail_mode: 去尾帧：auto 自动识别平台片尾卡（识别不到按 0.8 秒兜底）/
+    tail_mode: 去尾帧：auto 自动识别平台片尾定帧（识别不到不裁）/
                fixed 统一裁固定秒数 / off 不裁。只切集与集的接缝
     tail_fixed: tail_mode="fixed" 时的秒数
     """

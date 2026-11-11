@@ -340,7 +340,7 @@ function renderStats() {
           tcuts.length + ' 个集末';
         $('#tailCutVal').title = tcuts.map((c) =>
           '第' + c.ep + '集 −' + c.sec.toFixed(1) + 's' +
-          (c.by === 'fallback' ? '（兜底）' : '')).join('\n');
+          (c.by === 'card-low' ? '（超上限）' : '')).join('\n');
       }
     }
   } else {
@@ -2847,7 +2847,7 @@ $('#tailFixRow').hidden = S.tailMode !== 'fixed';
 function tailHint() {
   if (S.tailMode === 'off') return '去尾帧：不裁，集与集的接缝原样保留';
   if (S.tailMode === 'fixed') return '去尾帧：每个集末统一裁掉 ' + S.tailFixed.toFixed(1) + ' 秒';
-  return '去尾帧：自动识别平台片尾卡，识别不到按 0.8 秒兜底';
+  return '去尾帧：自动识别每集末尾的静止定帧，识别不到就不裁（不会硬切正片）';
 }
 $('#tailMode').onchange = (e) => {
   S.tailMode = e.target.value;

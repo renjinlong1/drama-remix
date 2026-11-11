@@ -1,15 +1,19 @@
-"""去尾帧：识别每集末尾的平台片尾卡片。
+"""去尾帧：识别每集末尾的平台片尾定帧，并给出该裁掉多少秒。
 
-短剧平台常在每集最后 2~8 秒贴一张静止的片尾卡（「下集更精彩」/ App 引导 / 黑场
-定帧），正片切到下一集时它会被一起带上，集与集之间就显得割裂。
+短剧平台常在每集最后贴一张静止的片尾卡（「下集更精彩」/ App 引导 / 黑场定帧），
+正片切到下一集时它会被一起带上，集与集之间显得割裂。
 
-识别思路（engine/plan._apply_tail_trim 只在「集与集的接缝」上用这里的秒数）：
-  1. 抽每集最后 15 秒、4fps、64 宽灰度帧（image2pipe，不落盘）；
-  2. 末尾必须是"静止段"——最后 0.6s 帧间差 < 1.5，否则视为没有卡片，返回 0；
-  3. 从静止段往前走：连续帧间差小（<6，字幕淡出/缓动都算卡片一部分）一路吃掉，
-     直到碰到一个硬切（≥12）；必要时再往外多跨一帧硬切边界（黑场过渡）；
-  4. 卡片起点 = 走停下的位置，卡长 = 集长 − 起点。上限 12 秒（防把长片尾字幕
-     全吞了），不足 1.0 秒视为"识别不到"，上层按兜底 0.8 秒处理。
+识别依据（只看得懂"画面有没有在动"，不需要语义模型）：
+
+1. 抽每集最后 6 秒、8fps、96 宽灰度帧（rawvideo 管道，不落盘、不解码 PNG）；
+2. **末尾必须是定帧**：最后 0.4 秒的帧间平均差全部 < 1.0（数字片源的静止画面
+   编码后帧差接近 0；实拍慢镜头一般还有 2~15 的呼吸/推镜）；
+3. 从末尾往前扩展连续静止段，碰到第一个 ≥1.0 的帧就停 —— 只吃**最后一段**，
+   中间剧情里的静止镜头不会被连带；
+4. 再往前补最多 0.3 秒的淡入/渐隐过渡（帧差 < 3.0 才算），**不把正片动作
+   当卡片入场**：旧实现固定往前吃 1.2 秒，真实 1.5 秒的卡片会被裁成 2.25 秒；
+5. 卡片长度 = 集长 − 起点。上限 4 秒（超过多半是长黑场，按 4 秒处理并降置信度），
+   不足 0.45 秒不裁。
 
 结果按 (路径, mtime, 时长, 版本) 缓存在 data/tailcard.json，同一集只分析一次。
 """
@@ -17,23 +21,22 @@
 from __future__ import annotations
 
 import hashlib
-import io as _io
 import json
 import os
 import threading
 
 from . import ffmpegx
 
-WINDOW = 15.0        # 只看每集最后 15 秒
-FPS = 4.0
-CUT = 12.0           # 硬切判定（帧间灰度均值差）
-SOFT = 8.0           # 入场动画判定（帧间灰度均值差；正片字幕画面实测 ≤6.2）
-STILL = 0.8           # 末尾静止判定（平均帧间差）
-STILL_MAX = 1.5       # 静止段内单帧差上限
-LEAD = 1.2            # 卡片入场动画最多算这么久
-MAX_CARD = 6.0       # 卡长上限（超过这个长度多半是慢镜头，不是卡片）
-MIN_CARD = 1.0       # 小于这个不算识别到（上层走兜底）
-FALLBACK = 0.8       # 兜底秒数（识别不到的集）
+WINDOW = 6.0          # 只看最后 6 秒
+FPS = 8.0             # 0.125 秒精度
+WIDTH = 96
+STILL = 1.0           # 定帧判定：相邻帧平均灰度差
+FADE = 3.0            # 淡入/渐隐过渡的帧差上限
+FADE_MAX = 0.3        # 过渡最多补这么久
+TAIL_GUARD = 0.4      # 末尾至少要有这么长的定帧才算数
+MIN_CARD = 0.45       # 短于这个不裁（避免误伤正常静止镜头）
+MAX_CARD = 4.0        # 卡片长度上限
+VERSION = "v2"
 
 _LOCK = threading.Lock()
 _CACHE_PATH = os.path.join("data", "tailcard.json")
@@ -67,72 +70,73 @@ def _key(path: str, dur: float) -> str:
         mt = 0
     h = hashlib.sha1(f"{os.path.normcase(os.path.abspath(path))}|{mt}".encode(),
                      usedforsecurity=False).hexdigest()[:16]
-    return f"v1|{h}|{dur:.2f}"
+    return f"{VERSION}|{h}|{dur:.2f}"
 
 
-def _frames(path: str, start: float, n: int) -> list:
-    """从 start 起抽 n 张 64 宽灰度帧，直接从管道读，不写临时文件。"""
-    args = ["-loglevel", "error", "-ss", f"{start:.3f}", "-i", path,
-            "-frames:v", str(n), "-vf",
-            f"fps={FPS},scale=64:-2,format=gray", "-f", "image2pipe", "-vcodec", "png", "-"]
-    data = ffmpegx.run_out(args)
-    out, pos = [], 0
-    while pos < len(data):
-        end = data.find(b"IEND", pos)
-        if end < 0:
-            break
-        end += 8
-        out.append(_io.BytesIO(data[pos:end]))
-        pos = end
-    if not out:
-        return []
+def _frames(path: str, start: float, n: int):
+    """从 start 起抽 n 帧，直接读裸灰度数据（比 PNG + PIL 快一个量级）。"""
     import numpy as np
-    from PIL import Image
-    imgs = []
-    for buf in out:
-        try:
-            imgs.append(np.asarray(Image.open(buf), dtype=np.float32))
-        except Exception:  # noqa: BLE001
-            continue
-    return imgs
+
+    info = ffmpegx.probe(path)
+    w = WIDTH
+    h = max(2, int(round(w * info["height"] / max(1, info["width"]) / 2)) * 2)
+    args = ["-loglevel", "error", "-ss", f"{start:.3f}", "-i", path,
+            "-frames:v", str(n), "-vf", f"fps={FPS},scale={w}:{h},format=gray",
+            "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+    data = ffmpegx.run_out(args)
+    size = w * h
+    if not data or len(data) < size:
+        return None
+    if len(data) % size:
+        data = data[: len(data) // size * size]
+    return np.frombuffer(data, dtype=np.uint8).reshape(-1, h, w).astype(np.int16)
 
 
-def measure(path: str, dur: float) -> float:
-    """识别这集末尾的片尾卡长度（秒）。识别不到返回 0.0。"""
+def measure_ex(path: str, dur: float) -> tuple[float, str]:
+    """识别这集末尾的片尾卡：返回 (秒数, 置信度)。
+
+    置信度：high（定帧 ≥0.8s）/ mid（0.45~0.8s）/ low（超过 4s 上限或异常）/
+    none（末尾没有定帧，不裁）。
+    """
     import numpy as np
 
     if not path or not os.path.exists(path) or dur <= 3.0:
-        return 0.0
-    win = min(WINDOW, dur * 0.4)
-    n = int(win * FPS)
-    imgs = _frames(path, max(0.0, dur - win - 0.3), n + 2)
-    if len(imgs) < 8:
-        return 0.0
-    t0 = max(0.0, dur - win - 0.3)
-    diffs = [float(np.abs(imgs[i] - imgs[i - 1]).mean()) for i in range(1, len(imgs))]
-    # 1) 末尾必须是"几乎完全静止"：平台卡片是定帧，帧间差 ~0；
-    #    缓推、慢走这类剧情镜头虽然差得少，但不会这么干净
-    tail_n = max(3, int(0.8 * FPS))
-    tail = diffs[-tail_n:]
-    if sum(tail) / len(tail) >= STILL or max(tail) >= STILL_MAX:
-        return 0.0
-    # 2) 从末尾往回吃静止段，长度记 S
+        return 0.0, "none"
+    win = min(WINDOW, max(2.0, dur * 0.5))
+    n = int(round(win * FPS)) + 2
+    start = max(0.0, dur - win - 0.2)
+    frames = _frames(path, start, n)
+    if frames is None or len(frames) < max(4, int(round(0.6 * FPS))):
+        return 0.0, "none"
+
+    diffs = np.abs(frames[1:] - frames[:-1]).mean(axis=(1, 2)).astype(float)
+    ts = [start + i / FPS for i in range(len(frames))]
+
+    # 1) 末尾必须是定帧：最后 TAIL_GUARD 秒每一帧都要几乎不变
+    tail_n = max(2, int(round(TAIL_GUARD * FPS)))
+    if len(diffs) < tail_n or float(diffs[-tail_n:].max()) >= STILL:
+        return 0.0, "none"
+
+    # 2) 从末尾往前吃连续静止段；碰到第一帧"在动"就停，只取最后一段
     i = len(diffs) - 1
-    while i >= 0 and diffs[i] < STILL_MAX:
+    while i >= 0 and diffs[i] < STILL:
         i -= 1
-    static_len = (len(diffs) - 1 - i) / FPS
-    if static_len >= win - 0.3:                 # 整个窗口都静止：长片尾/定帧
-        return round(min(win, MAX_CARD), 2)
-    # 3) 卡片入场动画（放大/淡入/滑入）最多再算 LEAD 秒，别把前面的剧情动作吃进来
-    lead_frames = int(LEAD * FPS)
-    j, eaten = i, 0
-    while j >= 0 and diffs[j] >= SOFT and eaten < lead_frames:
+    still_start = ts[i + 1]
+    still_len = dur - still_start
+
+    # 3) 淡入/渐隐过渡最多再补 FADE_MAX（只有帧差 < FADE 才算过渡）
+    j, extra = i, 0.0
+    while j >= 0 and diffs[j] < FADE and extra + 1.0 / FPS <= FADE_MAX + 1e-9:
         j -= 1
-        eaten += 1
-    card = static_len + eaten / FPS
+        extra += 1.0 / FPS
+    card = dur - ts[j + 1]
+
     if card < MIN_CARD:
-        return 0.0
-    return round(min(card, MAX_CARD), 2)
+        return 0.0, "none"
+    conf = "high" if still_len >= 0.8 else "mid"
+    if card > MAX_CARD:
+        return round(MAX_CARD, 2), "low"
+    return round(card, 2), conf
 
 
 def card_len(path: str, dur: float) -> float:
@@ -140,22 +144,36 @@ def card_len(path: str, dur: float) -> float:
     k = _key(path, dur)
     with _LOCK:
         c = _load().get(k)
-        if c is not None:
-            return float(c)
-    c = measure(path, dur)
+        if isinstance(c, list) and len(c) == 2:
+            return float(c[0])
+    sec, conf = measure_ex(path, dur)
     with _LOCK:
-        _load()[k] = c
+        _load()[k] = [sec, conf]
         _save()
-    return c
+    return sec
 
 
 def trim_for(path: str, dur: float, mode: str,
              fixed: float) -> tuple[float, str]:
-    """按模式返回 (该切掉的秒数, 依据)。依据：card 识别到卡片 / fallback 兜底 /
-    fixed 固定秒数 / off 不切。"""
+    """按模式返回 (该切掉的秒数, 依据)。
+
+    依据：card / card-low 识别到定帧；none 末尾没有定帧（不裁）；
+    fixed 固定秒数；off 不切。
+    """
     if mode == "off":
         return 0.0, "off"
     if mode == "fixed":
         return round(max(0.0, min(MAX_CARD, float(fixed or 0))), 2), "fixed"
-    c = card_len(path, dur)
-    return (c, "card") if c >= MIN_CARD else (FALLBACK, "fallback")
+    k = _key(path, dur)
+    with _LOCK:
+        c = _load().get(k)
+    if isinstance(c, list) and len(c) == 2:
+        sec, conf = float(c[0]), str(c[1])
+    else:
+        sec, conf = measure_ex(path, dur)
+        with _LOCK:
+            _load()[k] = [sec, conf]
+            _save()
+    if conf == "none" or sec <= 0:
+        return 0.0, "none"
+    return sec, ("card" if conf != "low" else "card-low")

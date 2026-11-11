@@ -1,0 +1,60 @@
+{
+  "checks": [
+    {
+      "name": "跨集方案产生接缝",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "每处裁剪 1.2~2.0s",
+      "ok": true,
+      "detail": "[1.58]"
+    },
+    {
+      "name": "依据是识别到卡片",
+      "ok": true,
+      "detail": "['card']"
+    },
+    {
+      "name": "裁剪总量与逐集之和一致",
+      "ok": true,
+      "detail": "1.58 vs 1.58"
+    },
+    {
+      "name": "没有片段越过集末",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "成片生成",
+      "ok": true,
+      "detail": "34513887"
+    },
+    {
+      "name": "成片时长贴合方案",
+      "ok": true,
+      "detail": "200.99 vs 200.9"
+    },
+    {
+      "name": "接缝后画面来自下一集",
+      "ok": true,
+      "detail": "3.3 vs 75.5"
+    },
+    {
+      "name": "接缝后已不在卡片上",
+      "ok": true,
+      "detail": "75.5"
+    }
+  ],
+  "total": 9,
+  "failed": 0,
+  "cuts": [
+    {
+      "ep": 1,
+      "sec": 1.58,
+      "by": "card"
+    }
+  ],
+  "estimated": 200.9,
+  "time": "2026-11-11 11:50:56"
+}

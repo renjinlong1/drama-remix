@@ -956,26 +956,48 @@ def _ensure_thumb(ep: dict, t: float) -> Path:
 
 
 def _prewarm_thumbs(limit: int = 24) -> None:
-    """分析完成后后台预热候选缩略图。
+    """分析完成后后台预热：先候选缩略图（首屏可见），再逐集尾帧（建方案要用）。
 
-    首屏每张卡片都要抽一帧，冷启动约 140ms/张；按候选顺序提前生成，
-    用户看到卡片时大多已经命中缓存。失败就跳过，不影响任何功能。
-    时间点公式与前端 thumbT() 保持一致，否则预热了也对不上缓存。
+    以前缩略图是一张张串行生成的（24 张约 3.5 秒）；改成 6 路并发后
+    约 0.7 秒完成。尾帧检测放在缩略图之后，避免十几个 ffmpeg 一起抢 CPU。
     """
     def run():
         try:
             with LOCK:
                 p, a = STATE["project"], STATE["analysis"]
-            if not p or not a:
+            if not p:
                 return
-            for c in (a.get("highlights") or [])[:limit]:
+            from concurrent.futures import ThreadPoolExecutor
+
+            items = []
+            for c in ((a or {}).get("highlights") or [])[:limit]:
                 try:
                     ep = projmod.ep_by_idx(p, c["ep"])
                     in_ep = max(0.0, float(c["g0"]) - ep["offset"])
                     t = in_ep + min(0.8, max(0.2, float(c.get("dur") or 6) * 0.35))
-                    _ensure_thumb(ep, min(t, max(0.0, ep["dur"] - 0.2)))
-                except Exception:     # noqa: BLE001 单张失败不影响其它
+                    items.append((ep, min(t, max(0.0, ep["dur"] - 0.2))))
+                except Exception:     # noqa: BLE001
                     continue
+
+            def thumb(pair):
+                try:
+                    _ensure_thumb(pair[0], pair[1])
+                except Exception:     # noqa: BLE001
+                    pass
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                list(pool.map(thumb, items))
+
+            from engine import tailcard
+
+            def tail(e):
+                try:
+                    tailcard.card_len(e.get("path", ""), float(e.get("dur", 0.0)))
+                except Exception:     # noqa: BLE001
+                    pass
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(tail, p.get("episodes") or []))
         except Exception:             # noqa: BLE001
             pass
     threading.Thread(target=run, daemon=True, name="thumb-prewarm").start()
