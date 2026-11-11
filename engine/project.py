@@ -220,20 +220,42 @@ def folder_ok(proj: dict) -> bool:
         return False
 
 
+_RECENT_CACHE: dict = {"key": None, "items": []}
+
+
 def recent(limit: int = 12) -> list[dict]:
+    """最近项目列表。
+
+    以前每次调用都把 12 个项目 JSON 全量读出来解析（单个 150KB 上下），
+    而 /api/status 每次刷新页面都会问一次。这里按「文件名 + mtime + 大小」
+    缓存元数据，只有项目真有变化才重读；missing 仍然实时判断（拔盘要能立刻反映）。
+    """
     PROJ.mkdir(exist_ok=True)
-    items = []
-    for p in sorted(PROJ.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)[:limit]:
+    stamped = []
+    for p in PROJ.glob("*.json"):
         try:
-            d = json.loads(p.read_text(encoding="utf-8"))
-            items.append({"name": d.get("name", p.stem), "total": d.get("total", 0),
-                          "eps": len(d.get("episodes", [])), "path": str(p),
-                          "folder": d.get("folder", ""),
-                          "missing": not folder_ok(d),
-                          "created_at": d.get("created_at", "")})
-        except Exception:
+            st = p.stat()
+        except OSError:
             continue
-    return items
+        stamped.append((st.st_mtime, st.st_size, p))
+    stamped.sort(reverse=True)
+    files = stamped[:limit]
+    key = tuple((str(p), m, sz) for m, sz, p in files)
+    if _RECENT_CACHE["key"] == key:
+        base = _RECENT_CACHE["items"]
+    else:
+        base = []
+        for _m, _sz, p in files:
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+                base.append({"name": d.get("name", p.stem), "total": d.get("total", 0),
+                             "eps": len(d.get("episodes", [])), "path": str(p),
+                             "folder": d.get("folder", ""),
+                             "created_at": d.get("created_at", "")})
+            except Exception:
+                continue
+        _RECENT_CACHE.update(key=key, items=base)
+    return [{**x, "missing": not folder_ok(x)} for x in base]
 
 
 def purge_missing() -> list[str]:

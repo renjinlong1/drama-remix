@@ -171,3 +171,73 @@ runtime\python.exe tests\bench.py --tag optimized --repeat 3 --render-cases h264
 runtime\python.exe tests\test_pipeline.py
 runtime\python.exe tests\test_hooks_policy.py
 ```
+
+## 九、分析链路与状态接口优化（第三轮）
+
+### 定位方法
+
+新增 `tests/prof_analyze.py`：对真实项目（40 集 / 4258 秒 / 607 个节拍 / 361 个动作点）分段计时 + `cProfile` + `tracemalloc`，并把优化前后的结果指纹一起存档到 `tests/results/profile_before.json` / `profile_after.json`。
+
+### 基线瓶颈（优化前）
+
+| 阶段 | 耗时 | 说明 |
+|---|---:|---|
+| `segment_beats` | 56.5 ms | 词库逐词 `in` + 118 个英文正则逐个 `search` |
+| `attach_acts` | 8.1 ms | 每个节拍遍历全剧 361 个动作点（约 22 万次比较） |
+| `find_highlights` | 128.3 ms | `apply_type_quotas` 每轮都全池排序；`_intimacy_score` 每次重排词表 |
+| `find_endings` | 1.9 ms | — |
+| **`analyze` 合计** | **188.8 ms** | |
+| `/api/status` | ~145 ms | 每次都起一个 `ffmpeg -version`（实测 114ms）+ 解析最近 12 个项目 JSON |
+| `/api/state`（已分析后） | 14.4 ms | FastAPI 递归编码 174KB 对象树 |
+
+### 优化项与权衡
+
+| # | 位置 | 改动 | 收益 | 潜在权衡 |
+|---|---|---|---|---|
+| 1 | `apply_type_quotas` | 全池只按分数排一次；`pool()` 找到第一条合格候选就返回（调用方本来就只用 `[0]`）；重叠判断只在同集内做 | 该函数从热点首位消失，`find_highlights` −61% | 以后若要「取前 N 条补位」需改回收集模式 |
+| 2 | `_WordTrie` 替换 118 个英文正则 | 一次扫描找出所有命中（含 `contract marriage`/`marriage` 这类包含关系），仍按词库定义顺序累加 | `segment_beats` 56.5→13.3 ms | Python 逐字符下探在超长文本上优势会缩小；当前节拍文本很短 |
+| 3 | `_intimacy_score` | 词表在模块加载时按长度排好；先用一次 C 正则扫首字，没命中直接返回 0 | 1224 次调用从 63ms 降到约 10ms | 极少数「含首字但不含词」的文本会多走一次完整逻辑，可忽略 |
+| 4 | `attach_acts` | 动作点先按集分桶，节拍只遍历本集的 | 8.1→0.7 ms | 无 |
+| 5 | `_density` | 中文字数用逐字符判断，不再 `re.findall` 建临时列表 | 小幅 | 无 |
+| 6 | `classify_candidate` | 8 条 lambda 规则表改为顺序 `if` | 1255 次调用省下 lambda 创建/调用 | 规则顺序必须与表保持一致（已注释标明） |
+| 7 | `ffmpegx.version()` | 结果缓存 | `/api/status` 省一次 114ms 的进程启动 | 换 ffmpeg 二进制后需重启服务 |
+| 8 | `ocrsubs.available()` | 结果缓存 | 未安装组件时不再反复 import 失败 | 装好组件后需重启服务 |
+| 9 | `projmod.recent()` | 按「文件名 + mtime + 大小」缓存元数据，`missing` 仍实时判断 | 省掉每次刷新解析 12 个 150KB JSON | 项目被外部改写但 mtime/大小不变时不会刷新（概率极低） |
+| 10 | `/api/state` | 直接 `json.dumps` + `Response`，绕开 FastAPI 递归编码 | 14.4→3.9 ms，少一份 170KB 级对象树 | 以后若加入 datetime 等非基本类型需自行转换 |
+| 11 | `/api/frame` | 抽帧改为 `_ensure_thumb()`，6 路信号量；分析完成后后台预热前 24 个候选帧 | 首屏卡片命中缓存时 2.5ms/张（冷抽 139ms） | 预热占用约 3.5 秒后台 CPU；极端并发时请求排队，但总吞吐更稳 |
+
+### 结果
+
+| 指标 | 优化前 | 优化后 | 变化 |
+|---|---:|---:|---:|
+| `segment_beats` | 56.46 ms | **13.26 ms** | **−76.5%** |
+| `attach_acts` | 8.08 ms | **0.73 ms** | **−91.0%** |
+| `find_highlights` | 128.29 ms | **50.37 ms** | **−60.7%** |
+| `find_endings` | 1.89 ms | **0.66 ms** | −65.1% |
+| `plan.build` | 2.18 ms | **1.24 ms** | −43.1% |
+| **`analyze` 全量** | **188.82 ms** | **64.15 ms** | **−66.0%** |
+| `/api/status` | ~145 ms | **2.0 ms** | **−98.6%** |
+| `/api/state`（热） | 14.4 ms | **3.9 ms** | **−72.9%** |
+| `analyze` 内存峰值 | 3.61 MB | 3.59 MB | −0.6% |
+| 缩略图冷抽 | 139 ms/张 | 命中 2.5 ms/张 | — |
+
+预热实测：清空 24 张候选帧后，后台 0.5s 生成 3 张、1s 生成 7 张、3.5s 全部 24 张——用户看到首屏时前两行卡片基本已就绪。
+
+### 行为一致性
+
+- **结果指纹完全一致**：优化前后 `fingerprint` 均为 `cfc92e3c94ee42a6`（40 集真实项目，含候选池、排序、方案）。
+- **词库匹配等价性**：新增 `tests/test_analyze_equiv.py`，用优化前的实现做参考，对项目全部 607 条节拍 + 25 条构造样本逐条比对 `_hits` / `suspense_of` / `_intimacy_score`，8 项断言全过；包含关系词（`contract marriage`）与重复词（`inheritance` 加两次、`我回来了` 加两次）都有专门断言。
+- **回归**：`test_pipeline` 110 项、`test_hooks_policy` 30 项、`test_naming` 42 项、`e2e_naming` 22 项，合计 **212 项断言全过**。
+- 9/9 fixtures 用例的「同输入两次结果一致」仍然成立。
+
+### 内存与分配
+
+`analyze` 峰值本来就只有 3.6MB，真正的浪费在重复分配：`/api/status` 每次重建 12 个项目对象的中间树、`/api/state` 每次让 FastAPI 复制一份 170KB 对象树、`_intimacy_score` 每次重排词表。这三处都已消除；`analyze` 峰值保持在 3.59MB，没有用内存换速度。
+
+### 复现
+
+```bat
+runtime\python.exe tests\prof_analyze.py --before   :: 需在旧版本上跑
+runtime\python.exe tests\prof_analyze.py
+runtime\python.exe tests\test_analyze_equiv.py
+```

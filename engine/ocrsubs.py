@@ -29,18 +29,29 @@ _ENGINE_ERR = ""
 
 
 # ── 引擎 ────────────────────────────────────────────────────────────
+_AVAIL: tuple[bool, str] | None = None
+
+
 def available() -> tuple[bool, str]:
-    """OCR 组件是否可用（未装时给出安装提示，不抛异常）。"""
-    global _ENGINE_ERR
+    """OCR 组件是否可用（未装时给出安装提示，不抛异常）。
+
+    结果缓存一次：`/api/status` 每次刷新都会问，未安装时反复 import 失败
+    是白付的开销。装好组件后重启服务即可生效。
+    """
+    global _ENGINE_ERR, _AVAIL
+    if _AVAIL is not None:
+        return _AVAIL
     if _ENGINE is not None:
-        return True, ""
+        _AVAIL = (True, "")
+        return _AVAIL
     try:
         import rapidocr_onnxruntime  # noqa: F401
-        return True, ""
+        _AVAIL = (True, "")
     except Exception as e:  # noqa: BLE001
         _ENGINE_ERR = ("未安装画面字幕识别组件。请在工具目录执行："
                        "pip install rapidocr-onnxruntime  （首次需联网，之后完全离线）")
-        return False, f"{_ENGINE_ERR}\n{e}"
+        _AVAIL = (False, f"{_ENGINE_ERR}\n{e}")
+    return _AVAIL
 
 
 def _engine():

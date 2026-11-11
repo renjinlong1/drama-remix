@@ -179,9 +179,17 @@ def iter_lines(args: list[str], stream: str = "stderr", timeout: int = 1800):
                 pass
 
 
+_FFMPEG_VER: str | None = None
+
+
 def version() -> str:
+    """ffmpeg 版本串。`-version` 每次都要起一个进程，缓存住别反复问。"""
+    global _FFMPEG_VER
+    if _FFMPEG_VER:
+        return _FFMPEG_VER
     out = run_text(["-version"], timeout=30)
-    return out.splitlines()[0] if out else "unknown"
+    _FFMPEG_VER = out.splitlines()[0] if out else "unknown"
+    return _FFMPEG_VER
 
 
 def even(n: float) -> int:

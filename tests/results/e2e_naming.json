@@ -13,7 +13,7 @@
     {
       "name": "候选带时间区间",
       "ok": true,
-      "detail": "{'g0': 0.04, 'g1': 15.0, 'dur': 14.96, 'ep': 1, 'text': '滚出去！你算什么东西 董事长来了 亲子鉴定结果出来了 三年后我回来了 这到底是谁 离婚吧，休想 原来是你', 'score': 59.89, 'act': 0.0, 'susp': 5.2, 'intim': 0.0, 'at_end': True, 'kind': '台词冲突', 'hits': ['亲子鉴定', '休想', '你算什么东西', '到底', '原来', '是谁'], 'beats': [0, 1], 'types': ['dialog', 'reveal', 'suspense'], 'primary_type': 'dialog', 'primary_label': '台词冲突', 'subtype': '', 'confidence': 1.0, 'signals': {'dialog': 1.0, 'reveal': 1.0, 'suspense': 1.0, 'intimacy': 0.0, 'motion': 0.0, 'audio': 0.0, 'intensity': 0.0, 'stillness': 1.0, 'position': 1.0}, 'evidence': [{'kind': 'dialog', 'strength': 1.0, 'note': '命中台词：亲子鉴定 / 休想 / 你算什么东西'}, {'kind': 'structure', 'strength': 0.6, 'note': '落在集末'}], 'source': 'dialog', 'has_dialog': True, 'rank_score': 64.68, 'rank_reason': '台词冲突 · 多源印证 · 第1集', 'dedup_key': '1@0', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'id': 0}"
+      "detail": "{'g0': 30.04, 'g1': 45.0, 'dur': 14.96, 'ep': 3, 'text': '滚出去！你算什么东西 董事长来了 亲子鉴定结果出来了 三年后我回来了 这到底是谁 离婚吧，休想 原来是你', 'score': 59.89, 'act': 0.0, 'susp': 5.2, 'intim': 0.0, 'at_end': True, 'kind': '台词冲突', 'hits': ['亲子鉴定', '休想', '你算什么东西', '到底', '原来', '是谁'], 'beats': [4, 5], 'types': ['dialog', 'reveal', 'suspense'], 'primary_type': 'dialog', 'primary_label': '台词冲突', 'subtype': '', 'confidence': 1.0, 'signals': {'dialog': 1.0, 'reveal': 1.0, 'suspense': 1.0, 'intimacy': 0.0, 'motion': 0.0, 'audio': 0.0, 'intensity': 0.0, 'stillness': 1.0, 'position': 0.75}, 'evidence': [{'kind': 'dialog', 'strength': 1.0, 'note': '命中台词：亲子鉴定 / 休想 / 你算什么东西'}, {'kind': 'structure', 'strength': 0.6, 'note': '落在集末'}], 'source': 'dialog', 'has_dialog': True, 'rank_score': 64.23, 'rank_reason': '台词冲突 · 多源印证 · 第3集', 'dedup_key': '3@15', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'id': 0}"
     },
     {
       "name": "第一批完成",
@@ -88,7 +88,7 @@
     {
       "name": "单条文件落盘",
       "ok": true,
-      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_name_en_18k0t"
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_name_0hhop_s_"
     },
     {
       "name": "非法模板返回 400",
@@ -113,5 +113,5 @@
   ],
   "total": 22,
   "failed": 0,
-  "time": "2026-11-10 16:33:23"
+  "time": "2026-11-11 11:40:21"
 }

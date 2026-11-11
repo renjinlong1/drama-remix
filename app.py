@@ -19,7 +19,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import Body, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from engine import analyze as analyzemod
@@ -207,6 +207,8 @@ def scan(body: dict = Body(...)):
         out = _proj_payload(p, a)
         if notice:
             out["notice"] = notice
+        # 分析已经完成，趁用户在看界面时把候选缩略图焐热
+        _prewarm_thumbs()
         return out
     _bg(work)
     return {"ok": True, "name": name, "notice": notice}
@@ -381,6 +383,7 @@ def open_project(body: dict = Body(...)):
         STATE["project"] = p
         STATE["analysis"] = a
         STATE["plan"] = None
+    _prewarm_thumbs()
     return _proj_payload(p, a)
 
 
@@ -413,7 +416,10 @@ def state():
     out = _proj_payload(p, a)
     out["ready"] = True
     out["plan"] = pl
-    return out
+    # 直接返回序列化结果：payload 全是基本类型，绕开 FastAPI 的递归编码，
+    # 少一次 170KB 级的中间对象树分配（每次刷新页面都会走这里）
+    body = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+    return Response(content=body, media_type="application/json; charset=utf-8")
 
 
 @app.post("/api/hooks/reseed")
@@ -433,6 +439,7 @@ def hooks_reseed():
     with LOCK:
         STATE["analysis"] = a
         STATE["plan"] = None        # 钩子换了，旧方案的开头已经不是这一批
+    _prewarm_thumbs()
     return {"seed": p["hook_seed"], "highlights": a["highlights"]}
 
 
@@ -464,6 +471,7 @@ def _restore_last_project():
         with LOCK:
             if not STATE["project"]:
                 STATE["project"], STATE["analysis"], STATE["plan"] = p, a, None
+        _prewarm_thumbs()
         return
 
 
@@ -919,22 +927,68 @@ def _prune_thumbs(limit: int = THUMB_LIMIT) -> None:
         pass
 
 
+# 抽帧要起 ffmpeg：刷新页面时二十多张卡片会同时请求，不限制并发会互相抢 CPU，
+# 实测 6 路左右吞吐最好、也最稳。
+_THUMB_SEM = threading.Semaphore(6)
+
+
+def _thumb_key(ep: dict, t: float) -> Path:
+    tt = max(0.0, min(float(ep["dur"]) - 0.1, float(t)))
+    return THUMBS / f"{Path(ep['file']).stem}_{int(tt * 2)}.jpg"
+
+
+def _ensure_thumb(ep: dict, t: float) -> Path:
+    """取（必要时生成）一帧缩略图，返回文件路径。"""
+    global _thumb_new
+    key = _thumb_key(ep, t)
+    if key.exists():
+        return key
+    with _THUMB_SEM:
+        if not key.exists():          # 排队期间别人可能已经生成
+            tt = max(0.0, min(float(ep["dur"]) - 0.1, float(t)))
+            ffmpegx.run(["-y", "-ss", f"{tt:.2f}", "-i", ep["path"], "-frames:v", "1",
+                         "-vf", "scale=180:-2", "-q:v", "5", str(key)],
+                        timeout=60, check=False)
+            _thumb_new += 1
+            if _thumb_new % 50 == 0:
+                _prune_thumbs()
+    return key
+
+
+def _prewarm_thumbs(limit: int = 24) -> None:
+    """分析完成后后台预热候选缩略图。
+
+    首屏每张卡片都要抽一帧，冷启动约 140ms/张；按候选顺序提前生成，
+    用户看到卡片时大多已经命中缓存。失败就跳过，不影响任何功能。
+    时间点公式与前端 thumbT() 保持一致，否则预热了也对不上缓存。
+    """
+    def run():
+        try:
+            with LOCK:
+                p, a = STATE["project"], STATE["analysis"]
+            if not p or not a:
+                return
+            for c in (a.get("highlights") or [])[:limit]:
+                try:
+                    ep = projmod.ep_by_idx(p, c["ep"])
+                    in_ep = max(0.0, float(c["g0"]) - ep["offset"])
+                    t = in_ep + min(0.8, max(0.2, float(c.get("dur") or 6) * 0.35))
+                    _ensure_thumb(ep, min(t, max(0.0, ep["dur"] - 0.2)))
+                except Exception:     # noqa: BLE001 单张失败不影响其它
+                    continue
+        except Exception:             # noqa: BLE001
+            pass
+    threading.Thread(target=run, daemon=True, name="thumb-prewarm").start()
+
+
 @app.get("/api/frame")
 def frame(ep: int, t: float = 1.0):
-    global _thumb_new
     with LOCK:
         p = STATE["project"]
     if not p:
         raise HTTPException(400, "还没有导入剧集")
     e = projmod.ep_by_idx(p, ep)
-    tt = max(0.0, min(e["dur"] - 0.1, t))
-    key = THUMBS / f"{Path(e['file']).stem}_{int(tt * 2)}.jpg"
-    if not key.exists():
-        ffmpegx.run(["-y", "-ss", f"{tt:.2f}", "-i", e["path"], "-frames:v", "1",
-                     "-vf", "scale=180:-2", "-q:v", "5", str(key)], timeout=60, check=False)
-        _thumb_new += 1
-        if _thumb_new % 50 == 0:
-            _prune_thumbs()
+    key = _ensure_thumb(e, t)
     if not key.exists():
         raise HTTPException(404, "取帧失败")
     return FileResponse(str(key), media_type="image/jpeg")

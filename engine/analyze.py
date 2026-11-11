@@ -106,18 +106,31 @@ _INTIMACY_EN = re.compile(
                               if w.isascii()) + r")(?![a-z])", re.I)
 
 
+_INT_STRONG_CN = tuple(sorted((w for w in INTIMACY_STRONG if not w.isascii()),
+                              key=len, reverse=True))
+_INT_WEAK_CN = tuple(sorted((w for w in INTIMACY_WEAK if not w.isascii()),
+                            key=len, reverse=True))
+# 快速预筛：任何亲密词出现都必然带着它的首字。绝大多数台词一个都没有，
+# 先用一次 C 正则扫首字，命中不了就直接返回，省掉 60 次 find。
+_INT_CHAR = re.compile("[" + re.escape("".join(sorted({w[0] for w in
+                                                       _INT_STRONG_CN + _INT_WEAK_CN}))) + "]")
+
+
 def _intimacy_score(text: str) -> float:
     """台词里的亲密信号强度 0~1。一个强词 0.6，两个封顶；弱词各 0.18。
 
-    按词长优先、区间去重：「吻」在「吻了」里面不重复计分，否则一句话
-    命中好几个包含关系的词，分数会虚高到顶。
+    按「长词先占位、同长度按出现位置」做区间去重：「吻」在「吻了」里面
+    不重复计分。词表在模块加载时就按长度排好，不再每次调用重排。
     """
     if not text:
         return 0.0
     low = text.lower()
+    en = len(set(m.group(0).lower() for m in _INTIMACY_EN.finditer(low)))
+    if not en and not _INT_CHAR.search(low):
+        return 0.0
     spans: list[tuple[int, int]] = []
 
-    def _mark(word: str) -> int:
+    def mark(word: str) -> int:
         n = 0
         start = 0
         while True:
@@ -132,12 +145,11 @@ def _intimacy_score(text: str) -> float:
         return n
 
     strong = 0
-    for w in sorted((w for w in INTIMACY_STRONG if not w.isascii()), key=len, reverse=True):
-        strong += _mark(w)
+    for w in _INT_STRONG_CN:
+        strong += mark(w)
     weak = 0
-    for w in sorted((w for w in INTIMACY_WEAK if not w.isascii()), key=len, reverse=True):
-        weak += _mark(w)
-    en = len(set(m.group(0).lower() for m in _INTIMACY_EN.finditer(low)))
+    for w in _INT_WEAK_CN:
+        weak += mark(w)
     strong += en
     return round(min(1.0, min(2, strong) * 0.6 + min(3, weak) * 0.18), 3)
 
@@ -169,10 +181,53 @@ EN_SUSPENSE: list[tuple[str, float]] = [
 LEX_CONFLICT = set(LEX["conflict"][1]) | set(EN_LEX["conflict"][1])
 LEX_REVEAL = set(LEX["reveal"][1]) | set(EN_LEX["reveal"][1])
 
-_EN_PATTERNS = [(cat, w, kw, re.compile(r"(?<![a-z])" + re.escape(kw) + r"(?![a-z])"))
-                for cat, (w, words) in EN_LEX.items() for kw in words]
-_EN_SUSPENSE = [(kw, wt, re.compile(r"(?<![a-z])" + re.escape(kw) + r"(?![a-z])"))
-                for kw, wt in EN_SUSPENSE]
+_EN_ORDER = [(cat, w, kw) for cat, (w, words) in EN_LEX.items() for kw in words]
+_EN_SUSPENSE = list(EN_SUSPENSE)          # (kw, wt)，保持定义顺序
+
+
+class _WordTrie:
+    """多模式匹配：一次扫描找出所有命中的词（含包含关系）。
+
+    英文词库里有 `contract marriage` 与 `marriage`、`banished` 与 `banish`
+    这种互相包含的条目，原来的实现是「每个词单独 search」，两者都会命中。
+    合并成一个交替正则只能返回最长的那条，会改变打分，所以这里用 trie
+    逐位置下探，命中集合与原实现一致。中文仍走 `in`——C 实现比 Python
+    逐字符循环更快，没必要换。
+    """
+
+    __slots__ = ("root",)
+    END = None
+
+    def __init__(self, words):
+        self.root: dict = {}
+        for w in words:
+            node = self.root
+            for ch in w:
+                node = node.setdefault(ch, {})
+            node[self.END] = w
+
+    def scan(self, text: str, boundary: bool = False) -> set[str]:
+        out: set[str] = set()
+        root = self.root
+        n = len(text)
+        for i in range(n):
+            if boundary and i and "a" <= text[i - 1] <= "z":
+                continue
+            node = root
+            j = i
+            while j < n:
+                node = node.get(text[j])
+                if node is None:
+                    break
+                j += 1
+                w = node.get(self.END)
+                if w is not None and (not boundary or j >= n or not ("a" <= text[j] <= "z")):
+                    out.add(w)
+        return out
+
+
+_EN_TRIE = _WordTrie([kw for _, _, kw in _EN_ORDER])
+_EN_SUS_TRIE = _WordTrie([kw for kw, _ in EN_SUSPENSE])
 
 # 水词/寒暄：信息量低，优先删
 FILLER = ["嗯", "哦", "啊", "好的", "是", "我知道了", "你先出去", "你先下去",
@@ -210,8 +265,11 @@ def _hits(text: str) -> tuple[float, list[str]]:
                 if kw not in hits:
                     hits.append(kw)
     lower = text.lower()
-    for cat, w, kw, pat in _EN_PATTERNS:
-        if pat.search(lower):
+    found = _EN_TRIE.scan(lower, boundary=True)
+    # 按词库定义顺序累加：`inheritance` 在 reveal / power 里各有一条，
+    # 原实现会加两次，这里同样按两条各加一次，不能改成 dict 去重。
+    for cat, w, kw in _EN_ORDER:
+        if kw in found:
             score += w
             if kw not in hits:
                 hits.append(kw)
@@ -228,8 +286,9 @@ def suspense_of(text: str) -> tuple[float, list[str]]:
         return 0.0, []
     low = text.lower()
     hits = [(w, wt) for w, wt in SUSPENSE_WORDS if w in text]
-    hits += [(kw, wt) for kw, wt, pat in _EN_SUSPENSE if pat.search(low)]
-    q = len(re.findall(r"[？?]", text))
+    found = _EN_SUS_TRIE.scan(low, boundary=True)
+    hits += [(kw, wt) for kw, wt in _EN_SUSPENSE if kw in found]
+    q = text.count("？") + text.count("?")
     return round(sum(wt for _, wt in hits) + q * 1.1, 2), sorted({w for w, _ in hits})
 
 
@@ -245,13 +304,15 @@ def attach_acts(beats: list[dict], acts: list[dict] | None,
         for b in beats:
             b.setdefault("act", 0.0)
         return
+    # 先按集分桶：以前每个 beat 都要遍历全剧 300+ 个动作点，40 集就是 20 万次比较
+    by_ep: dict[int, list[dict]] = {}
+    for a in acts:
+        by_ep.setdefault(a["ep"], []).append(a)
     for b in beats:
         best = 0.0
         n = 0
         kinds: list[str] = []
-        for a in acts:
-            if a["ep"] != b["ep"]:
-                continue
+        for a in by_ep.get(b["ep"], ()):
             if a["g1"] < b["g0"] - pad0 or a["g0"] > b["g1"] + pad1:
                 continue
             n += 1
@@ -270,7 +331,8 @@ def _density(text: str, dur: float) -> float:
     """语速密度：中文按字/秒，英文按词/秒（两种剧都要能用）。"""
     if dur <= 0.2:
         return 0.0
-    cjk = len(re.findall(r"[\u4e00-\u9fff]", text))
+    # 逐字符判断比 re.findall 建一个临时列表轻，607 个节拍累计下来差一截
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
     if cjk:
         cps = cjk / dur
         # 3-6 字/秒是正常语速，越快越紧绷
@@ -565,18 +627,26 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
         "stillness": stillness, "position": position,
     }
 
-    rules = [
-        ("energy",      lambda s: s["motion"] >= 0.55 and s["intensity"] >= 0.5 and s["audio"] >= 0.25),
-        ("action",      lambda s: s["motion"] >= 0.30 or s["intensity"] >= 0.60),
-        ("dialog",      lambda s: s["dialog"] >= 0.35),
-        ("reveal",      lambda s: s["reveal"] >= 0.34),
-        # 亲密戏排在冲突/反转之后：一句"你凭什么亲我"该算台词冲突而不是亲密接触
-        ("intimacy",    lambda s: s["intimacy"] >= 0.50),
-        ("suspense",    lambda s: s["suspense"] >= 0.34),
-        ("tension",     lambda s: s["stillness"] >= 0.50 and s["audio"] >= 0.28 and s["dialog"] <= 0.30),
-        ("performance", lambda s: s["stillness"] >= 0.62 and s["dialog"] <= 0.45),
-    ]
-    types = [t for t, ok in rules if ok(signals)]
+    # 顺序判断代替 lambda 列表：1255 个候选 × 8 条 lambda 的创建与调用
+    # 是实打实的开销，判断顺序与原 rules 表完全一致
+    types: list[str] = []
+    if motion >= 0.55 and intensity >= 0.5 and audio >= 0.25:
+        types.append("energy")
+    if motion >= 0.30 or intensity >= 0.60:
+        types.append("action")
+    if dialog >= 0.35:
+        types.append("dialog")
+    if reveal >= 0.34:
+        types.append("reveal")
+    # 亲密戏排在冲突/反转之后：一句"你凭什么亲我"该算台词冲突而不是亲密接触
+    if intim >= 0.50:
+        types.append("intimacy")
+    if susp_s >= 0.34:
+        types.append("suspense")
+    if stillness >= 0.50 and audio >= 0.28 and dialog <= 0.30:
+        types.append("tension")
+    if stillness >= 0.62 and dialog <= 0.45:
+        types.append("performance")
     if not types:
         types = ["dialog" if has_dialog else "performance"]
     primary = types[0]
@@ -770,14 +840,28 @@ def apply_type_quotas(picked: list[dict], cands: list[dict], goal: int,
     if not picked:
         return picked
     chosen = {id(c) for c in picked}
+    # 全池只按分数排一次。以前每个 pool() 都 sorted 一遍，24 轮下来是最大热点
+    # （1255 个候选 × 24 次排序），而调用方每次只需要「最优的那一条」。
+    ordered = sorted(cands, key=lambda c: -c.get("rank_score", 0))
 
-    def pool(t=None, exclude=None) -> list[dict]:
-        return sorted(
-            (c for c in cands if id(c) not in chosen
-             and (t is None or c.get("primary_type") == t)
-             and (exclude is None or c.get("primary_type") != exclude)
-             and not any(_overlap_near(c, p) for p in picked)),
-            key=lambda x: -x["rank_score"])
+    def pool(t=None, exclude=None):
+        """返回第一个合格候选。同集才做重叠判断，跨集直接跳过（等价但快得多）。"""
+        by_ep: dict[int, list[dict]] = {}
+        for p in picked:
+            by_ep.setdefault(p["ep"], []).append(p)
+        for c in ordered:
+            if id(c) in chosen:
+                continue
+            ct = c.get("primary_type")
+            if t is not None and ct != t:
+                continue
+            if exclude is not None and ct == exclude:
+                continue
+            ps = by_ep.get(c["ep"])
+            if ps and any(_overlap_near(c, p) for p in ps):
+                continue
+            return c
+        return None
 
     for _ in range(goal):
         counts: dict[str, int] = {}
@@ -790,11 +874,11 @@ def apply_type_quotas(picked: list[dict], cands: list[dict], goal: int,
         victim = min((p for p in picked if (p.get("primary_type") or "other") == over),
                      key=lambda p: p["rank_score"])
         repl = pool(exclude=over)
-        if not repl:
+        if repl is None:
             break
         picked.remove(victim)
-        picked.append(repl[0])
-        chosen.add(id(repl[0]))
+        picked.append(repl)
+        chosen.add(id(repl))
 
     available = {c.get("primary_type") for c in cands if c.get("primary_type")}
     for t in TYPE_ORDER:
@@ -804,12 +888,12 @@ def apply_type_quotas(picked: list[dict], cands: list[dict], goal: int,
             if sum(1 for p in picked if p.get("primary_type") == t) >= min_per_type:
                 break
             repl = pool(t=t)
-            if not repl:
+            if repl is None:
                 break
             victim = min(picked, key=lambda p: p["rank_score"])
             picked.remove(victim)
-            picked.append(repl[0])
-            chosen.add(id(repl[0]))
+            picked.append(repl)
+            chosen.add(id(repl))
     return picked
 
 
