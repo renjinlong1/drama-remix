@@ -52,7 +52,12 @@ def scan(folder: str | Path, name: str = "") -> dict:
         if not cues:
             cached = _cached_ocr_srt(folder.name, i + 1) or _cached_ocr_srt(pname, i + 1)
             if cached:
-                cues = subs.load_subtitle(cached)
+                # 旧 OCR 缓存坏了（半截文件 / 换系统时编码变了）不能让整次导入失败：
+                # 当作没有字幕继续走，需要时用户还能手动重跑画面识别。
+                try:
+                    cues = subs.load_subtitle(cached)
+                except Exception:  # noqa: BLE001
+                    cues = []
                 if cues:
                     src = "ocr"
                     sp = cached
@@ -258,6 +263,31 @@ def recent(limit: int = 12) -> list[dict]:
     return [{**x, "missing": not folder_ok(x)} for x in base]
 
 
+def forget(name: str) -> list[str]:
+    """彻底清掉一部剧在本机留下的**项目记录**。
+
+    删「最近项目」时只 unlink 掉 projects/*.json 是不够的：同名 .json.bak
+    会留着旧时间轴，data/act 的动作点缓存会让重新导入挂上旧片的事件，
+    recent() 的元数据缓存还可能把已删的条目再吐回列表。这三处一起清，
+    重新导入才会真正按新项目走一遍扫描分析。
+
+    data/ocr 的字幕缓存按界面承诺保留（按文件夹名索引、带自校验），
+    原片与成片也一律不动。
+    """
+    safe = _safe_name(name)
+    removed: list[str] = []
+    for p in (PROJ / f"{safe}.json", PROJ / f"{safe}.json.bak",
+              ROOT / "data" / "act" / f"{safe}.json"):
+        try:
+            if p.exists():
+                p.unlink()
+                removed.append(str(p))
+        except OSError:
+            continue
+    _RECENT_CACHE.update(key=None, items=[])   # 下一轮 recent() 必须重读目录
+    return removed
+
+
 def purge_missing() -> list[str]:
     """删掉源视频已经不在这台电脑上的项目（只动 projects/*.json）。
 
@@ -277,4 +307,5 @@ def purge_missing() -> list[str]:
             gone.append(str(d.get("name") or p.stem))
         except OSError:
             continue
+    _RECENT_CACHE.update(key=None, items=[])
     return gone

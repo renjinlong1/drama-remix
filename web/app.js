@@ -1,9 +1,22 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-10.2';
+window.__APP_BUILD__ = '2026-11-12.1';
 
-const $ = (s) => document.querySelector(s);
+/* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
+   以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
+   后面所有绑定（选文件夹 / 导出标题清空 / 扫描并分析 / 最近项目删除）全丢。
+   缺失元素一律返回一个游离 div：属性赋值是安全的空操作，脚本继续跑完。 */
+const _MISSING = new Set();
+const $ = (s) => {
+  const el = document.querySelector(s);
+  if (el) return el;
+  if (!_MISSING.has(s)) {
+    _MISSING.add(s);
+    try { console.warn('[枫的瞬剪] 页面缺少元素：' + s + '（强制刷新一次可恢复完整界面）'); } catch (e) { /* 忽略 */ }
+  }
+  return document.createElement('div');
+};
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
 const S = {
@@ -17,6 +30,7 @@ const S = {
   hkPrefs: { enabled: {}, weight: {} },
   hkShift: {}, endShift: {},
   batchAlloc: 'total', batchTotal: 20, outdir: '', outShown: '', nameTpl: '',
+  scanPending: false,
   hookMeta: {},
   target: 360, lead: 1, tailMode: 'auto', tailFixed: 2, efVideoDur: 0, jobTimer: null, saveTimer: null,
 };
@@ -71,7 +85,8 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 function toast(msg, bad) {
-  let el = $('#toast');
+  // 这里必须直接查 DOM：#toast 是按需创建的，用容错版 $() 会拿到游离节点
+  let el = document.getElementById('toast');
   if (!el) {
     el = document.createElement('div'); el.id = 'toast';
     el.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);' +
@@ -87,6 +102,15 @@ function toast(msg, bad) {
 }
 
 /* ── 任务轮询 ─────────────────────────────────────── */
+/* 扫描统一收尾：以前任务报错时 watchJob 直接 return，onDone 不执行，
+   #btnScan 一直是 disabled —— 重新导入时看着就像「按钮坏了」。
+   现在不管成功 / 失败 / 排队超时，都从这里把按钮和遮罩恢复。 */
+function endScan() {
+  if (!S.scanPending) return;
+  S.scanPending = false;
+  $('#btnScan').disabled = false;
+  impHide();
+}
 function watchJob(onDone) {
   clearInterval(S.jobTimer);
   $('#globalbar').classList.add('on');
@@ -99,6 +123,7 @@ function watchJob(onDone) {
     $('#pmsg').textContent = j.msg || '';
     if (j.state === 'done' || j.state === 'error') {
       clearInterval(S.jobTimer);
+      endScan();
       impHide();
       $('#globalbar').classList.remove('on');
       $('#progBar').style.width = j.state === 'done' ? '100%' : '0';
@@ -113,13 +138,13 @@ function watchJob(onDone) {
 /* 导入遮罩：扫描期间把旧剧的画面盖住。
    不然旧项目的剧集/候选还留在屏幕上，很容易被当成"新剧识别成了旧剧"。 */
 function impShow(name, sub) {
-  const m = $('#impMask');
+  const m = document.getElementById('impMask');
   if (!m) return;
   $('#impName').textContent = name || '新剧';
   $('#impSub').textContent = sub || '扫描分集 → 配对字幕 / 识别画面台词 → 分析剧情';
   m.hidden = false;
 }
-function impHide() { const m = $('#impMask'); if (m) m.hidden = true; }
+function impHide() { const m = document.getElementById('impMask'); if (m) m.hidden = true; }
 
 async function doScan() {
   const folder = $('#folder').value.trim().replace(/^["']|["']$/g, '');
@@ -133,6 +158,7 @@ async function doScan() {
     $('#projName').value = name;
     toast('这次导入记为「' + name + '」，不会覆盖上一部剧');
   }
+  S.scanPending = true;
   $('#btnScan').disabled = true;
   impShow(name || base, $('#ocrChk').checked
     ? '扫描分集 → 配对字幕 / 识别画面台词 → 分析剧情'
@@ -141,14 +167,12 @@ async function doScan() {
     await apiStart('/api/scan', { folder, name, ocr: $('#ocrChk').checked }, '导入');
     $('#pmsg').textContent = '扫描中…';
     watchJob((res) => {
-      $('#btnScan').disabled = false;
-      impHide();
+      endScan();
       if (res) applyProject(res);
       renderRecents();
     });
   } catch (e) {
-    $('#btnScan').disabled = false;
-    impHide();
+    endScan();
     toast(e.message, true);
   }
 }
@@ -3051,6 +3075,21 @@ async function boot() {
 }
 
 /* ── 最近项目：列表 / 新建 / 删除 ─────────────────── */
+/* 删掉一部剧后，把浏览器里跟着这部剧走的记录一并清掉：
+   候选的人工增删 / 位移按剧名存，上次停留的目录也可能是这部剧的。
+   不清的话重新导入同名剧会捡回旧选择和失效路径，扫描看起来就"不对劲"。 */
+function forgetRecentLocal(name, folder) {
+  try {
+    localStorage.removeItem('dc_hooks_' + name);
+    const norm = (p) => String(p || '').replace(/[\\/]+$/, '').toLowerCase();
+    const f = norm(folder);
+    ['dc.lastDir', 'dc.outBrowse', 'dc.outDir'].forEach((k) => {
+      const v = localStorage.getItem(k);
+      if (!v) return;
+      if (!f || norm(v) === f) localStorage.removeItem(k);
+    });
+  } catch (err) { /* 隐私模式忽略 */ }
+}
 async function renderRecents(list) {
   const box = $('#recents');
   if (!list) {
@@ -3103,6 +3142,12 @@ async function renderRecents(list) {
                    '以后重新导入还是秒级。')) return;
       try {
         const r = await api('/api/project/delete', { path: row.dataset.p });
+        forgetRecentLocal(r.name, r.folder);
+        // 删除时若还有扫描在跑，别把按钮 / 遮罩留在"导入中"的状态
+        clearInterval(S.jobTimer);
+        S.scanPending = false;
+        $('#btnScan').disabled = false;
+        impHide();
         toast('已删除项目：' + r.name);
         if (r.current) { location.reload(); return; }
         renderRecents();
@@ -3118,18 +3163,31 @@ $('#btnPurgeMiss').onclick = async () => {
                '只删项目存档，原片和已识别的字幕缓存都保留。')) return;
   try {
     const r = await api('/api/projects/purge_missing', {});
+    (r.removed || []).forEach((nm) => forgetRecentLocal(nm, ''));
+    clearInterval(S.jobTimer);
+    S.scanPending = false;
+    $('#btnScan').disabled = false;
+    impHide();
     toast('已清理 ' + r.removed.length + ' 个失效项目');
     renderRecents();
     const st = await api('/api/state', undefined, 'GET');
-    if (st && st.ready) applyProject(st); else if (!st || !st.ready) location.reload();
+    // 以前这里无条件 reload；后端已经没有可接回的项目时会一直刷，
+    // 页面反复重载，看着就像「扫描并分析」按钮点不动。
+    if (st && st.ready) applyProject(st);
+    else if (S.ready) location.reload();
   } catch (e) { toast(e.message, true); }
 };
 
 $('#btnNewProj').onclick = () => {
   $('#folder').value = '';
   $('#projName').value = S.ready ? '' : $('#projName').value;
+  endScan();            // 重新导入前先把扫描按钮从任何异常状态里放出来
+  impHide();
   openDirPicker();
 };
 
 window.addEventListener('resize', () => { resize(); draw(); });
+/* 只有整段脚本跑完、所有按钮都绑上，才标记为就绪；
+   index.html 的兜底脚本靠这个标记判断要不要接管关键按钮。 */
+window.__APP_READY__ = true;
 boot();

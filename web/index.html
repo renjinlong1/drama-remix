@@ -490,21 +490,107 @@
 </div>
 
 <script>
-/* 「清空」按钮的兜底：如果浏览器加载的是旧版 app.js（没有绑定这个按钮），
-   这里仍能把文件名格式清干净。新版脚本会设置 __nameTplBound，届时本段直接让位。 */
+/* 关键按钮兜底：HTML 与 app.js 版本错开（浏览器缓存 / 旧进程）时，
+   app.js 可能绑到一半就抛错，后面的「选文件夹 / 清空 / 扫描并分析」全都没绑上。
+   只在 __APP_READY__ 没置上、且按钮自己也确实没绑事件时接管；正常页面完全不介入。 */
 (function () {
-  var btn = document.getElementById('btnClearName');
-  if (!btn) return;
-  btn.addEventListener('click', function () {
-    if (window.__nameTplBound) return;
+  var TIP = '留空 = 按剧名命名。填了模板：末尾数字当起始序号，本批逐条 +1，遇到同名文件自动顺延。';
+  function say(msg) {
+    var el = document.getElementById('toast');
+    if (!el) { el = document.createElement('div'); el.id = 'toast';
+      el.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#1c2331;border:1px solid #334056;color:#dfe6f4;padding:9px 16px;border-radius:9px;font-size:12.5px;z-index:300';
+      document.body.appendChild(el); }
+    el.textContent = msg; el.style.opacity = 1;
+    clearTimeout(el._t); el._t = setTimeout(function () { el.style.opacity = 0; }, 2600);
+  }
+  function clearName() {
     var inp = document.getElementById('bNameTpl');
-    if (inp) { inp.value = ''; try { inp.focus(); } catch (e) {} }
-    btn.hidden = true;
+    var btn = document.getElementById('btnClearName');
+    if (inp) inp.value = '';
+    if (btn) btn.hidden = true;
     try { localStorage.removeItem('dc.nameTpl'); } catch (e) {}
     var tip = document.getElementById('bNameTip');
-    if (tip) {
-      tip.className = 'nametip';
-      tip.textContent = '留空 = 按剧名命名。填了模板：末尾数字当起始序号，本批逐条 +1，遇到同名文件自动顺延。';
+    if (tip) { tip.className = 'nametip'; tip.textContent = TIP; }
+    say('已清空导出标题，回到按剧名命名');
+  }
+  function miniPicker() {
+    var modal = document.getElementById('dirModal');
+    var list = document.getElementById('dirList');
+    if (!modal || !list) { say('文件夹选择器不可用，请刷新页面'); return; }
+    var pathEl = document.getElementById('dirPath');
+    var ok = document.getElementById('dirOk');
+    var title = document.getElementById('dirTitle');
+    if (title) title.textContent = '选择成片保存到哪个文件夹';
+    if (ok) ok.textContent = '存到这里';
+    modal.classList.add('on');
+    function choose(p) {
+      if (!p) { say('请先进入一个文件夹'); return; }
+      var inp = document.getElementById('bDir');
+      if (inp) inp.value = p;
+      try { localStorage.setItem('dc.outDir', p); } catch (e) {}
+      modal.classList.remove('on');
+      say('成片会存到：' + p);
+    }
+    function go(p) {
+      list.textContent = '加载中…';
+      fetch('/api/folder/list?path=' + encodeURIComponent(p || ''), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('读取失败 ' + r.status); return r.json(); })
+        .then(function (r) {
+          var cur = r.path || '';
+          if (pathEl) pathEl.value = cur || '此电脑 · 请选择盘符';
+          if (ok) ok.onclick = function () { choose(cur); };
+          list.innerHTML = '';
+          (r.dirs || []).forEach(function (d) {
+            var el = document.createElement('div');
+            el.className = 'ditem';
+            el.textContent = '📁 ' + d.name;
+            el.title = d.name;
+            el.onclick = function () { go(d.path); };
+            el.ondblclick = function () { choose(d.path); };
+            list.appendChild(el);
+          });
+          if (!(r.dirs || []).length) {
+            var e = document.createElement('div');
+            e.className = 'empty';
+            e.textContent = '这个文件夹里没有子文件夹，可直接点「存到这里」';
+            list.appendChild(e);
+          }
+        })
+        .catch(function (e) { list.textContent = '无法读取这个文件夹：' + e.message; });
+    }
+    var up = document.getElementById('dirUp');
+    if (up) up.onclick = function () { go(''); };
+    go('');
+  }
+  document.addEventListener('click', function (e) {
+    if (window.__APP_READY__) return;
+    var t = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!t || typeof t.onclick === 'function' || t.disabled) return;
+    if (t.id === 'btnClearName') { e.preventDefault(); e.stopPropagation(); clearName(); return; }
+    if (t.id === 'btnPickDir') {
+      e.preventDefault(); e.stopPropagation();
+      try {
+        if (typeof window.openDirPicker === 'function') window.openDirPicker('out');
+        else if (typeof window.dirOpen === 'function') window.dirOpen('out');
+        else miniPicker();
+      } catch (err) { miniPicker(); }
+      return;
+    }
+    if (t.id === 'btnScan') {
+      e.preventDefault(); e.stopPropagation();
+      if (typeof window.doScan === 'function') window.doScan();
+      else say('界面程序没加载完，请按 Ctrl+Shift+R 刷新一次');
+      return;
+    }
+  }, true);
+  /* 脚本没跑完时把已有的版本提示放出来，用户能一键刷新到完整界面 */
+  window.addEventListener('load', function () {
+    if (window.__APP_READY__) return;
+    var b = document.getElementById('verBanner');
+    if (b) b.hidden = false;
+    var reload = document.getElementById('verReload');
+    if (reload && typeof reload.onclick !== 'function') {
+      reload.onclick = function () { location.reload(); };
     }
   });
 })();

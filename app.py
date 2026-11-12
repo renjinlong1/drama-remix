@@ -42,7 +42,7 @@ app = FastAPI(title="枫的瞬剪")
 app.mount("/assets", StaticFiles(directory=str(WEB)), name="assets")
 
 STATE: dict = {"project": None, "analysis": None, "plan": None, "job": None,
-               "exports": set()}
+               "exports": set(), "forgotten": set()}
 LOCK = threading.Lock()
 
 # 浏览器预览要直读的本地素材类型（/api/file）
@@ -169,6 +169,9 @@ def scan(body: dict = Body(...)):
     name = (body.get("name") or "").strip()
     use_ocr = bool(body.get("ocr", True))
     name, notice = _resolve_proj_name(name, folder)
+    # 同名剧刚从「最近项目」删掉又重新导入：撤销墓碑，允许它作为新项目落盘
+    with LOCK:
+        STATE["forgotten"].discard(projmod._safe_name(name))
     _job_start("scan")
 
     def work():
@@ -197,10 +200,17 @@ def scan(body: dict = Body(...)):
         except Exception as e:  # noqa: BLE001
             p["acts"] = []
             print(f"[acts] 跳过：{e}", flush=True)
+        # 删除「最近项目」时可能正有这次扫描在跑：别让它把刚清掉的项目再写回来
+        with LOCK:
+            dropped = projmod._safe_name(p["name"]) in STATE["forgotten"]
+        if dropped:
+            return None     # 前端 onDone 收到空结果，只刷新列表、不把旧剧画回界面
         projmod.save(p)
         _job_emit(95, "分析剧情")
         a = analyzemod.analyze(p)
         with LOCK:
+            if projmod._safe_name(p["name"]) in STATE["forgotten"]:
+                return None
             STATE["project"] = p
             STATE["analysis"] = a
             STATE["plan"] = None
@@ -318,10 +328,14 @@ def scan_acts(body: dict = Body(default={})):
 
 @app.post("/api/project/delete")
 def delete_project(body: dict = Body(...)):
-    """删掉一个项目存档（只删 projects/*.json）。
+    """把「最近项目」里的条目连根清掉。
 
-    OCR 字幕缓存留在 data/ocr 里不动——同一部剧以后再导一遍还是秒级，
-    所以误删了也不至于要重跑几十分钟识别。
+    以前只 unlink 一个 projects/*.json：同名 .json.bak、画面动作缓存、
+    recent() 的内存元数据、以及仍在后台跑的扫描都有可能把它再带回来；
+    重新导入时按钮就像"还认得这部剧"一样不干活。现在统一走 projmod.forget()，
+    并给正在跑的扫描立一个墓碑，防止它把已删的项目重新写回磁盘 / STATE。
+
+    data/ocr 的字幕缓存按界面承诺保留，重新导入仍然秒级命中。
     """
     raw = (body.get("path") or "").strip()
     if not raw:
@@ -332,22 +346,27 @@ def delete_project(body: dict = Body(...)):
         target.relative_to(root)          # 只允许删 projects 目录下的文件
     except Exception:  # noqa: BLE001
         raise HTTPException(400, "只能删除项目存档（projects 目录内）")
-    if target.suffix.lower() != ".json" or not target.exists():
-        raise HTTPException(404, "项目文件不存在")
+    if target.suffix.lower() != ".json":
+        raise HTTPException(400, "只能删除项目存档（.json）")
 
     name = target.stem
+    folder = ""
+    try:
+        if target.exists():
+            folder = str(projmod.load(target).get("folder") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    removed = projmod.forget(name)        # 存档 + .bak + 动作缓存 + 失效 recent 缓存
     with LOCK:
         cur = STATE["project"]
         is_cur = bool(cur) and projmod._safe_name(cur.get("name") or "") == name
+        STATE["forgotten"].add(name)      # 后台扫描收尾时不要再写回来
         if is_cur:
             STATE["project"] = None
             STATE["analysis"] = None
             STATE["plan"] = None
-    try:
-        target.unlink()
-    except OSError as e:
-        raise HTTPException(500, f"删除失败：{e}")
-    return {"ok": True, "name": name, "current": is_cur}
+    return {"ok": True, "name": name, "folder": folder,
+            "current": is_cur, "removed": len(removed)}
 
 
 @app.post("/api/projects/purge_missing")
@@ -356,6 +375,10 @@ def purge_missing():
     gone = projmod.purge_missing()
     drop = {projmod._safe_name(x) for x in gone}
     with LOCK:
+        # 顺带清掉这些项目的 .json.bak / 动作缓存，和单条删除保持一致
+        for nm in drop:
+            projmod.forget(nm)
+            STATE["forgotten"].add(nm)
         cur = STATE["project"]
         if cur and projmod._safe_name(cur.get("name") or "") in drop:
             STATE["project"] = None
@@ -1204,16 +1227,45 @@ def card_show(kind: str = "overlay"):
 
 @app.post("/api/folder/pick")
 def pick_folder():
-    """调系统选择框选文件夹（Windows）。"""
+    """调系统选择框选文件夹（Windows）。
+
+    便携运行时精简掉了 tkinter，旧实现必然抛 ModuleNotFoundError，
+    调用方永远拿到空路径——表现就是「选择文件夹」点了没反应。
+    改成 Win32 Shell 的 SHBrowseForFolderW，纯标准库 ctypes，零新增依赖。
+    """
+    if os.name != "nt":
+        return {"folder": "", "error": "系统文件夹选择框仅支持 Windows，请用内置目录浏览器"}
     try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        d = filedialog.askdirectory(title="选择剧集所在文件夹")
-        root.destroy()
-        return {"folder": d or ""}
+        import ctypes
+        from ctypes import wintypes
+
+        class BROWSEINFO(ctypes.Structure):
+            _fields_ = [("hwndOwner", wintypes.HWND), ("pidlRoot", ctypes.c_void_p),
+                        ("pszDisplayName", wintypes.LPWSTR), ("lpszTitle", wintypes.LPWSTR),
+                        ("ulFlags", ctypes.c_uint), ("lpfn", ctypes.c_void_p),
+                        ("lParam", ctypes.c_ssize_t), ("iImage", ctypes.c_int)]
+
+        shell32 = ctypes.windll.shell32
+        shell32.SHBrowseForFolderW.argtypes = [ctypes.POINTER(BROWSEINFO)]
+        shell32.SHBrowseForFolderW.restype = ctypes.c_void_p
+        shell32.SHGetPathFromIDListW.argtypes = [ctypes.c_void_p, wintypes.LPWSTR]
+        shell32.SHGetPathFromIDListW.restype = wintypes.BOOL
+        buf = ctypes.create_unicode_buffer(1024)
+        # BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_EDITBOX
+        bi = BROWSEINFO()
+        bi.pszDisplayName = ctypes.cast(buf, wintypes.LPWSTR)
+        bi.lpszTitle = "选择文件夹"
+        bi.ulFlags = 0x0001 | 0x0040 | 0x0010
+        pidl = shell32.SHBrowseForFolderW(ctypes.byref(bi))
+        if not pidl:
+            return {"folder": ""}          # 用户取消
+        try:
+            out = ctypes.create_unicode_buffer(1024)
+            folder = out.value if shell32.SHGetPathFromIDListW(pidl, out) else ""
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+            ctypes.windll.ole32.CoTaskMemFree(pidl)
+        return {"folder": folder}
     except Exception as e:  # noqa: BLE001
         return {"folder": "", "error": str(e)}
 
