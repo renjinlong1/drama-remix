@@ -44,7 +44,7 @@ ck("$ 对缺失元素返回游离节点", "document.createElement('div')" in JS 
 ck("$ 缺失元素只提示一次", "if (!_MISSING.has(s))" in JS)
 ck("toast 用原生 getElementById（不能吃游离节点）", "let el = document.getElementById('toast');" in JS)
 ck("脚本末尾标记 __APP_READY__", "window.__APP_READY__ = true;" in JS)
-ck("构建标记已更新", "'2026-11-12.1'" in JS)
+ck("构建标记已更新", "'2026-11-13.1'" in JS)
 
 # ── B 任务失败收尾 ───────────────────────────────────────────
 ck("endScan 统一收尾函数存在", "function endScan()" in JS)

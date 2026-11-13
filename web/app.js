@@ -1,7 +1,7 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-12.1';
+window.__APP_BUILD__ = '2026-11-13.1';
 
 /* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
    以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
@@ -32,6 +32,7 @@ const S = {
   batchAlloc: 'total', batchTotal: 20, outdir: '', outShown: '', nameTpl: '',
   scanPending: false,
   hookMeta: {},
+  auto: { deep: false, plan: null, topics: [], stats: null },
   target: 360, lead: 1, tailMode: 'auto', tailFixed: 2, efVideoDur: 0, jobTimer: null, saveTimer: null,
 };
 
@@ -111,7 +112,7 @@ function endScan() {
   $('#btnScan').disabled = false;
   impHide();
 }
-function watchJob(onDone) {
+function watchJob(onDone, onFail) {
   clearInterval(S.jobTimer);
   $('#globalbar').classList.add('on');
   S.jobTimer = setInterval(async () => {
@@ -127,7 +128,12 @@ function watchJob(onDone) {
       impHide();
       $('#globalbar').classList.remove('on');
       $('#progBar').style.width = j.state === 'done' ? '100%' : '0';
-      if (j.state === 'error') { $('#pmsg').textContent = '出错：' + j.msg; toast(j.msg, true); return; }
+      if (j.state === 'error') {
+        $('#pmsg').textContent = '出错：' + j.msg;
+        toast(j.msg, true);
+        if (onFail) onFail(j.msg);
+        return;
+      }
       $('#pmsg').textContent = '完成';
       onDone && onDone(j.result);
     }
@@ -195,6 +201,11 @@ function applyProject(d) {
     else toast('这 ' + d.ocr.eps + ' 集画面里没识别到字幕', true);
   }
   S.ready = true;
+  // 换项目：旧的识别结果与混剪方案都不能继承
+  S.auto = { deep: false, plan: null, topics: [], stats: null };
+  $('#acFb').hidden = true; $('#acMetrics').hidden = true;
+  $('#acList').innerHTML = ''; $('#acRender').hidden = true;
+  loadAutoState();
   S.name = d.name; S.total = d.total; S.eps = d.eps || [];
   S.folder = d.folder || S.folder || '';
   S.beats = d.beats || []; S.highlights = d.highlights || [];
@@ -2939,7 +2950,8 @@ $('#btnClearHook').onclick = () => {
 };
 
 /* 右栏参数区页签：顺剪设置 / 开头钩子 / 包装（同一张卡内切换，避免挤成一条缝） */
-const RTAB_HINT = { plan: '', hook: '选一个当开头', pack: '角标 / 尾帧 / 模板' };
+const RTAB_HINT = { plan: '', hook: '选一个当开头', pack: '角标 / 尾帧 / 模板',
+  auto: '主题 / 时长 / 节奏' };
 function setRTab(t, save) {
   if (!Object.prototype.hasOwnProperty.call(RTAB_HINT, t)) t = 'plan';
   $$('#rTabs .rtab').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
@@ -2964,6 +2976,8 @@ function syncTabDots() {
     packTab.classList.toggle('dot', n > 0);
     packTab.title = n ? '已上传 ' + n + ' 个素材（logo / 尾帧 / 模板）' : '角标、引导尾帧、包装模板';
   }
+  const autoTab = $('#rTabs .rtab[data-t="auto"]');
+  if (autoTab) autoTab.classList.toggle('dot', !!S.auto.plan);
 }
 $$('#rTabs .rtab').forEach((b) => { b.onclick = () => setRTab(b.dataset.t); });
 syncTabDots();
@@ -3184,6 +3198,151 @@ $('#btnNewProj').onclick = () => {
   endScan();            // 重新导入前先把扫描按钮从任何异常状态里放出来
   impHide();
   openDirPicker();
+};
+
+/* ── 自动混剪：多模态识别概况 + 主题 / 时长 / 节奏约束 ───────────── */
+async function loadAutoState() {
+  if (!S.ready) return;
+  try {
+    const r = await api('/api/multimodal', undefined, 'GET');
+    if (!r.ready) return;
+    S.auto.deep = !!r.deep;
+    S.auto.topics = r.topics || [];
+    S.auto.stats = r.stats || {};
+    acShowStat(r);
+  } catch (e) { /* 首屏无状态是正常的 */ }
+}
+function acShowStat(r) {
+  const st = r.stats || {};
+  const top = (r.topics || []).slice(0, 3)
+    .map((t) => t.name + ' ' + (t.share * 100).toFixed(0) + '%').join(' · ') || '未识别到明确主题';
+  const sc = Object.keys(st.scenes || {}).slice(0, 3).join(' / ') || '—';
+  const em = Object.keys(st.emotions || {}).slice(0, 3).join(' / ') || '—';
+  $('#acStat').textContent =
+    (r.deep ? '深度识别（台词 + 画面 + 声音 + 动作）' : '仅台词识别（点「识别素材」可提升准确度）') +
+    ' · ' + (st.units || 0) + ' 个融合片段 / ' + fmt(st.seconds || 0) +
+    '\n主题：' + top + '　场景：' + sc + '\n情绪：' + em +
+    '　平均节奏 ' + (st.pace || 0).toFixed(2) + '　跨模态置信度 ' + (st.confidence || 0).toFixed(2);
+  $('#acStat').style.whiteSpace = 'pre-line';
+  $('#acTopics').innerHTML = (r.topics || []).slice(0, 6).map((t) =>
+    '<button type="button" data-t="' + esc(t.name) + '">' + esc(t.name) +
+    '<b>' + (t.share * 100).toFixed(0) + '%</b></button>').join('');
+  $$('#acTopics button').forEach((b) => {
+    b.onclick = () => { $('#acTopic').value = b.dataset.t; $('#acTopic').focus(); };
+  });
+  $('#acTopicList').innerHTML = (r.topics || []).map((t) =>
+    '<option value="' + esc(t.name) + '"></option>').join('');
+}
+function acFeedback(fb) {
+  const el = $('#acFb');
+  if (!fb) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  el.className = 'acfb ' + (fb.level === 'success' ? 'ok' : fb.level === 'warning' ? 'warn' : 'err');
+  const hints = (fb.hints || []).filter(Boolean);
+  el.innerHTML = '<b>' + esc(fb.title) + '</b>' + esc(fb.msg) +
+    (hints.length ? '<ul>' + hints.map((h) => '<li>' + esc(h) + '</li>').join('') + '</ul>' : '');
+}
+function acMetrics(m) {
+  if (!m) { $('#acMetrics').hidden = true; return; }
+  const chip = (k, v) => '<i>' + k + ' <b>' + esc(v) + '</b></i>';
+  $('#acMetrics').innerHTML = [
+    chip('成片', m.estimated + 's / ' + m.target + 's'),
+    chip('片段', m.segments),
+    chip('主题一致', (m.topic_purity * 100).toFixed(0) + '%'),
+    chip('关键信息', (m.key_coverage * 100).toFixed(0) + '%'),
+    chip('节奏', m.pace_avg.toFixed(2)),
+    chip('转场代价', m.transition_avg.toFixed(2)),
+    chip('置信度', m.confidence.toFixed(2)),
+  ].join('');
+  $('#acMetrics').hidden = false;
+}
+function acPlanView(plan) {
+  $('#acList').innerHTML = plan.segments.map((s, i) => {
+    const fd = (s.fade_in || s.fade_out)
+      ? '<span class="fade">软转场 ' + (Math.max(s.fade_in || 0, s.fade_out || 0)).toFixed(2) + 's</span>' : '';
+    return '<div class="acseg" title="' + esc((s.evidence || []).join(' · ')) + '">' +
+      '<div class="acl"><span class="n">' + (i + 1) + '</span>' +
+      '<span>第 ' + s.ep + ' 集 · ' + s.start.toFixed(1) + '–' + s.end.toFixed(1) + 's</span>' +
+      '<span class="tag">' + esc(s.topic) + '</span>' +
+      '<span class="tag">' + esc(s.emotion) + '</span>' +
+      '<span class="tag">' + esc(s.scene) + '</span>' +
+      '<span>节奏 ' + s.pace.toFixed(2) + '</span>' + fd + '</div>' +
+      '<div class="act">' + esc((s.text || '（无台词画面段）').slice(0, 90)) + '</div></div>';
+  }).join('');
+}
+$('#acScan').onclick = async () => {
+  if (!S.ready) { toast('先导入剧集', true); return; }
+  const b = $('#acScan');
+  b.disabled = true;
+  try {
+    await apiStart('/api/multimodal/scan', { force: true }, '识别素材');
+    watchJob((res) => {
+      b.disabled = false;
+      loadAutoState();
+      S.auto.plan = null; $('#acRender').hidden = true;
+      acFeedback(null); $('#acMetrics').hidden = true; $('#acList').innerHTML = '';
+      if (res) toast('识别完成：' + res.units + ' 个融合片段');
+    }, () => { b.disabled = false; });
+  } catch (e) {
+    b.disabled = false;
+    toast(e.message, true);
+  }
+};
+$('#acPlan').onclick = async () => {
+  if (!S.ready) { toast('先导入剧集', true); return; }
+  const b = $('#acPlan');
+  b.disabled = true;
+  try {
+    const r = await api('/api/autocut/plan', {
+      topic: $('#acTopic').value.trim(),
+      target: Number($('#acTarget').value) || 180,
+      style: $('#acStyle').value,
+      transition: $('#acTrans').value,
+      relax: $('#acRelax').checked,
+    });
+    acFeedback(r.feedback);
+    S.auto.plan = r.plan || null;
+    $('#acRender').hidden = !r.plan;
+    if (r.plan) { acMetrics(r.metrics); acPlanView(r.plan); syncTabDots(); }
+    else { $('#acMetrics').hidden = true; $('#acList').innerHTML = ''; }
+    toast(r.feedback.title, !r.feedback.ok);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    b.disabled = false;
+  }
+};
+$('#acRender').onclick = async () => {
+  if (!S.auto.plan) { toast('先生成混剪方案', true); return; }
+  const b = $('#acRender');
+  b.disabled = true;
+  $('#out').innerHTML = '';
+  $('#btnShowOut').hidden = true;
+  const base = Object.assign(packOpts(), {
+    logo: S.logo, logo_pos: $('#logoPos').value,
+    outdir: S.outdir, outdir_sub: !$('#bFlat').checked,
+    name_tpl: String(S.nameTpl || '').trim(),
+    title: ($('#title').value || S.name) + '_自动混剪',
+  });
+  try {
+    await apiStart('/api/autocut/render', base, '自动混剪出片');
+    watchJob((res) => {
+      b.disabled = false;
+      if (!res) return;
+      $('#out').innerHTML =
+        '<video src="/api/video?path=' + encodeURIComponent(res.video) + '" controls></video>' +
+        '<div class="oi"><span>' + (res.name ? esc(res.name) + ' · ' : '') +
+        fmt(res.duration) + ' · ' + res.width + '×' + res.height + ' · ' +
+        res.segments + ' 段</span><span>' + res.size_mb + ' MB</span></div>';
+      if (res.dir) showOutDir(res.dir);
+      $('#btnShowOut').hidden = false;
+      $('#btnShowOut').textContent = '查看自动混剪成片';
+      toast('自动混剪完成：' + fmt(res.duration));
+    }, () => { b.disabled = false; });
+  } catch (e) {
+    b.disabled = false;
+    toast(e.message, true);
+  }
 };
 
 window.addEventListener('resize', () => { resize(); draw(); });

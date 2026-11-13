@@ -277,7 +277,8 @@ def forget(name: str) -> list[str]:
     safe = _safe_name(name)
     removed: list[str] = []
     for p in (PROJ / f"{safe}.json", PROJ / f"{safe}.json.bak",
-              ROOT / "data" / "act" / f"{safe}.json"):
+              ROOT / "data" / "act" / f"{safe}.json",
+              ROOT / "data" / "multimodal" / f"{safe}.json"):
         try:
             if p.exists():
                 p.unlink()

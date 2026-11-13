@@ -47,6 +47,22 @@ def _cut(seg: dict, proj: dict, work: Path, i: int, w: int, h: int, fit: str,
     out = work / f"s{i:03d}.mp4"
     dur = max(0.25, seg["dur"])
     vf = _vfilter(w, h, fit)
+    # 自动混剪的软转场：相邻段落差异大时，在切口两侧各加一小段淡入/淡出。
+    # 顺剪方案不带这两个字段，行为完全不变。
+    fi = max(0.0, min(0.5, float(seg.get("fade_in") or 0.0)))
+    fo = max(0.0, min(0.5, float(seg.get("fade_out") or 0.0)))
+    af = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    if fi or fo:
+        vparts, aparts = [], []
+        if fi > 0:
+            vparts.append(f"fade=t=in:st=0:d={fi:.3f}")
+            aparts.append(f"afade=t=in:st=0:d={fi:.3f}")
+        if fo > 0:
+            st = max(0.0, dur - fo)
+            vparts.append(f"fade=t=out:st={st:.3f}:d={fo:.3f}")
+            aparts.append(f"afade=t=out:st={st:.3f}:d={fo:.3f}")
+        vf += "," + ",".join(vparts)
+        af += "," + ",".join(aparts)
     args = ["-y", "-ss", f"{seg['start']:.3f}", "-t", f"{dur:.3f}", "-i", ep["path"]]
     if ep.get("has_audio"):
         args += ["-map", "0:v:0", "-map", "0:a:0"]
@@ -55,7 +71,7 @@ def _cut(seg: dict, proj: dict, work: Path, i: int, w: int, h: int, fit: str,
                  "-map", "0:v:0", "-map", "1:a:0"]
     args += [
         "-vf", vf,
-        "-af", "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo",
+        "-af", af,
         "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-g", str(FPS * 2),
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",

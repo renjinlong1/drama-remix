@@ -174,6 +174,7 @@
         <button class="rtab on" data-t="plan">顺剪设置</button>
         <button class="rtab" data-t="hook">开头钩子</button>
         <button class="rtab" data-t="pack">包装</button>
+        <button class="rtab" data-t="auto">自动混剪</button>
         <span class="hint" id="rTabHint"></span>
       </div>
 
@@ -227,6 +228,48 @@
           <div class="empty sm">还没设开头钩子</div>
         </div>
         <div class="panetip">换开头：在中间「高光钩子候选」里点任意一张卡片；每张卡右下角的 −N+ 是这一批出几条。</div>
+      </div>
+
+      <div class="cb scroll tabpane" id="paneAuto" hidden>
+        <div class="achead">
+          <span class="hint">主题 / 场景 / 情绪 / 节奏四路信号对齐后自动挑片段</span>
+          <button type="button" class="btn xs ghost" id="acScan"
+            title="逐集采样画面与声音，重新识别主题、场景、情绪与节奏；已识别过会增量跳过">识别素材</button>
+        </div>
+        <div class="acstat" id="acStat">尚未识别：点右上「识别素材」做一次画面 + 声音深度识别。</div>
+        <div class="actopics" id="acTopics"></div>
+        <div class="acform">
+          <label class="lab">目标主题 <span class="hint">留空 = 按素材主导主题</span></label>
+          <input id="acTopic" class="input" list="acTopicList" spellcheck="false"
+                 placeholder="例：打脸、甜宠、身份反转、复仇；也可直接填台词里的词">
+          <datalist id="acTopicList"></datalist>
+          <div class="row2">
+            <label class="acf"><span>目标时长 / 秒</span>
+              <input id="acTarget" class="input num" type="number" min="30" max="900" step="10" value="180"></label>
+            <label class="acf"><span>节奏风格</span>
+              <select id="acStyle" class="input">
+                <option value="calm">舒缓叙事</option>
+                <option value="steady" selected>均衡推进</option>
+                <option value="tight">紧凑快剪</option>
+                <option value="burst">高能爆发</option>
+              </select></label>
+          </div>
+          <div class="row2">
+            <label class="acf"><span>转场</span>
+              <select id="acTrans" class="input">
+                <option value="auto">自动（差异大才淡化）</option>
+                <option value="soft">全部淡入淡出</option>
+                <option value="cut">全部硬切</option>
+              </select></label>
+            <label class="chk xs" title="素材不足、主题弱匹配或节奏不匹配时也输出短片">
+              <input type="checkbox" id="acRelax">放宽限制</label>
+          </div>
+        </div>
+        <button type="button" class="btn wide" id="acPlan">生成混剪方案</button>
+        <div class="acfb" id="acFb" hidden></div>
+        <div class="acmetrics" id="acMetrics" hidden></div>
+        <div class="aclist" id="acList"></div>
+        <button type="button" class="btn wide primary" id="acRender" hidden>开始出片（自动混剪）</button>
       </div>
 
       <div class="cb scroll tabpane" id="panePack" hidden>

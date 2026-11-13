@@ -23,7 +23,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from engine import analyze as analyzemod
-from engine import ffmpegx, naming, ocrsubs, pack
+from engine import autocut as autocutmod
+from engine import ffmpegx, multimodal as mmmod, naming, ocrsubs, pack
 from engine import plan as planmod
 from engine import project as projmod
 from engine import render as rendermod
@@ -42,7 +43,8 @@ app = FastAPI(title="枫的瞬剪")
 app.mount("/assets", StaticFiles(directory=str(WEB)), name="assets")
 
 STATE: dict = {"project": None, "analysis": None, "plan": None, "job": None,
-               "exports": set(), "forgotten": set()}
+               "exports": set(), "forgotten": set(),
+               "multimodal": None, "autoplan": None}
 LOCK = threading.Lock()
 
 # 浏览器预览要直读的本地素材类型（/api/file）
@@ -172,6 +174,8 @@ def scan(body: dict = Body(...)):
     # 同名剧刚从「最近项目」删掉又重新导入：撤销墓碑，允许它作为新项目落盘
     with LOCK:
         STATE["forgotten"].discard(projmod._safe_name(name))
+        STATE["multimodal"] = None
+        STATE["autoplan"] = None
     _job_start("scan")
 
     def work():
@@ -365,6 +369,8 @@ def delete_project(body: dict = Body(...)):
             STATE["project"] = None
             STATE["analysis"] = None
             STATE["plan"] = None
+            STATE["multimodal"] = None
+            STATE["autoplan"] = None
     return {"ok": True, "name": name, "folder": folder,
             "current": is_cur, "removed": len(removed)}
 
@@ -384,6 +390,8 @@ def purge_missing():
             STATE["project"] = None
             STATE["analysis"] = None
             STATE["plan"] = None
+            STATE["multimodal"] = None
+            STATE["autoplan"] = None
     return {"ok": True, "removed": gone}
 
 
@@ -406,6 +414,8 @@ def open_project(body: dict = Body(...)):
         STATE["project"] = p
         STATE["analysis"] = a
         STATE["plan"] = None
+        STATE["multimodal"] = None
+        STATE["autoplan"] = None
     _prewarm_thumbs()
     return _proj_payload(p, a)
 
@@ -494,6 +504,7 @@ def _restore_last_project():
         with LOCK:
             if not STATE["project"]:
                 STATE["project"], STATE["analysis"], STATE["plan"] = p, a, None
+                STATE["multimodal"], STATE["autoplan"] = None, None
         _prewarm_thumbs()
         return
 
@@ -718,6 +729,146 @@ def name_preview(body: dict = Body(...)):
         return {"ok": False, "msg": str(e)}
     r["ok"] = True
     return r
+
+
+# ── 多模态识别 / 自动混剪 ────────────────────────────────────────────
+def _mm_cache_for(p: dict) -> dict | None:
+    """项目没换片源时复用落盘的画面 / 声音特征。"""
+    path = mmmod.cache_path(p["name"], ROOT)
+    if not path.exists():
+        return None
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    if d.get("version") != mmmod.CACHE_VERSION or d.get("name") != p["name"]:
+        return None
+    eps = d.get("eps") or {}
+    for e in p["episodes"]:
+        r = eps.get(str(e["idx"]))
+        if (not r or r.get("file") != e["file"]
+                or abs(float(r.get("dur", -1)) - float(e["dur"])) > 0.5):
+            return None
+    return d
+
+
+def _cur_project() -> tuple[dict | None, dict | None]:
+    """服务刚重启时 STATE 还是空的：先按现有 /api/state 的规则接回上一部剧。"""
+    with LOCK:
+        p, a = STATE["project"], STATE["analysis"]
+    if not p:
+        _restore_last_project()
+        with LOCK:
+            p, a = STATE["project"], STATE["analysis"]
+    return p, a
+
+
+def _mm_fused(p: dict, a: dict) -> dict:
+    """内存里没有就现场融合一次；没有深度缓存时纯文本降级也能出方案。"""
+    with LOCK:
+        f = STATE.get("multimodal")
+    if f and f.get("project") == p["name"] and f.get("units"):
+        return f
+    cache = _mm_cache_for(p)
+    fused = mmmod.fuse(p, (a or {}).get("beats") or [], p.get("acts") or [],
+                       cache, (a or {}).get("highlights") or [])
+    fused.update(project=p["name"], deep=bool(cache))
+    with LOCK:
+        STATE["multimodal"] = fused
+    return fused
+
+
+@app.get("/api/multimodal")
+def multimodal_state():
+    p, a = _cur_project()
+    if not p:
+        return {"ready": False, "deep": False, "stats": mmmod.summarize([]), "topics": []}
+    f = _mm_fused(p, a or {})
+    return {"ready": True, "deep": bool(f.get("deep")), "source": f.get("source"),
+            "stats": f["stats"], "topics": f["stats"]["topics"], "units": len(f["units"]),
+            "styles": {k: v["label"] for k, v in autocutmod.STYLES.items()}}
+
+
+@app.post("/api/multimodal/scan")
+def multimodal_scan(body: dict = Body(default={})):
+    """全剧画面 / 声音采样（后台任务），完成后重算融合结果。"""
+    p, a = _cur_project()
+    if not p:
+        raise HTTPException(400, "还没有导入剧集")
+    force = bool(body.get("force", False))
+    _job_start("multimodal")
+
+    def work():
+        _job_emit(2, "准备多模态识别")
+        mmmod.scan_project(p, ROOT, force=force,
+                           progress=lambda pct, msg: _job_emit(2 + pct * 0.88, msg))
+        cache = _mm_cache_for(p)
+        fused = mmmod.fuse(p, (a or {}).get("beats") or [], p.get("acts") or [],
+                           cache, (a or {}).get("highlights") or [])
+        fused.update(project=p["name"], deep=bool(cache))
+        _job_emit(95, "融合主题 / 场景 / 情绪 / 节奏")
+        with LOCK:
+            STATE["multimodal"] = fused
+            STATE["autoplan"] = None
+        return {"ready": True, "deep": bool(cache), "stats": fused["stats"],
+                "units": len(fused["units"])}
+
+    _bg(work)
+    return {"ok": True}
+
+
+@app.post("/api/autocut/plan")
+def autocut_plan(body: dict = Body(...)):
+    """生成自动混剪方案；失败时返回结构化反馈（素材不足 / 主题冲突 / 节奏不匹配）。"""
+    p, a = _cur_project()
+    if not p:
+        raise HTTPException(400, "还没有导入剧集")
+    f = _mm_fused(p, a or {})
+    r = autocutmod.build(
+        p, f["units"],
+        topic=str(body.get("topic") or "").strip(),
+        target=float(body.get("target", 180)),
+        style=str(body.get("style") or "steady"),
+        transition=str(body.get("transition") or "auto"),
+        relax=bool(body.get("relax", False)))
+    with LOCK:
+        STATE["autoplan"] = r["plan"] if r.get("plan") else None
+    r["deep"] = bool(f.get("deep"))
+    r["detected"] = f["stats"]["topics"][:6]
+    r["units"] = len(f["units"])
+    return r
+
+
+@app.post("/api/autocut/render")
+def autocut_render(body: dict = Body(...)):
+    """把自动混剪方案渲染成完整 mp4（复用主渲染管线，含软转场淡入淡出）。"""
+    p, _a = _cur_project()
+    with LOCK:
+        pl = STATE.get("autoplan")
+    if not p:
+        raise HTTPException(400, "还没有导入剧集")
+    if not pl:
+        raise HTTPException(400, "先生成自动混剪方案")
+    title = (body.get("title") or (p["name"] + "_自动混剪")).strip()
+    safe = _safe_name(title)
+    tpl = _name_tpl(body)
+    outdir = _out_dir(body, safe)
+    if tpl:
+        out = naming.Namer(outdir, tpl).next()
+    else:
+        out = outdir / f"{safe}.mp4"
+        if out.exists():
+            out = outdir / f"{safe}_{random.randint(1, 999)}.mp4"
+    opts = _pack_opts(body, title)
+    _job_start("autocut")
+
+    def work():
+        r = rendermod.render(p, pl, str(out), opts, _job_emit)
+        r.update(dir=str(outdir), name=out.name, mode="auto_remix")
+        return r
+
+    _bg(work)
+    return {"ok": True, "out": str(out), "dir": str(outdir)}
 
 
 @app.post("/api/render")
