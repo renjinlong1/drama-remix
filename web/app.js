@@ -1,7 +1,7 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-13.1';
+window.__APP_BUILD__ = '2026-11-16.1';
 
 /* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
    以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
@@ -753,6 +753,35 @@ function setBatchCount(h, n) {
   renderHooks();
   renderBatchBar();
   draw();
+}
+
+/* 高光候选区「全选」：当前筛选下能看到的候选一次全部选中（各出 1 条）。
+   以前要一个个点卡片右下角的 +，挑 10 个开头就是 10 次点击。
+   已经选过的保留原条数，不会被重置成 1。 */
+function selectAllHooks() {
+  const list = hookShown();
+  if (!list.length) { toast('当前筛选下没有候选可以全选', true); return; }
+  let added = 0;
+  list.forEach((h) => {
+    const k = hkId(h);
+    if (S.batch[k]) return;
+    S.batch[k] = { g0: h.g0, g1: h.g1, count: 1, ep: h.ep };
+    added += 1;
+  });
+  renderHooks(); renderBatchBar(); draw();
+  if (!added) {
+    toast('当前筛选下的 ' + list.length + ' 个候选已经全选过了');
+    return;
+  }
+  const n = batchItems().length;
+  const totalMode = S.batchAlloc === 'total' && S.batchTotal > 0;
+  let tail = '（各出 1 条）';
+  if (totalMode) {
+    tail = n > S.batchTotal
+      ? '，当前按总数 ' + S.batchTotal + ' 条分配（只够前 ' + S.batchTotal + ' 个，可在右下角改成按张数）'
+      : '，合计 ' + S.batchTotal + ' 条';
+  }
+  toast('已全选 ' + n + ' 个开头' + tail + '；不想要的再点卡片右下角的 −');
 }
 
 /* ── 批量结尾指定：每条成片可以单独选用哪个结尾候选 ──
@@ -1589,15 +1618,25 @@ function pickStats() {
 
 /* 按钮上直接写清将清掉多少项，空选时置灰，避免误以为"点了没反应" */
 function syncClearPicks() {
-  const btn = $('#btnClearHook');
-  if (!btn) return;
   const s = pickStats();
-  btn.textContent = s.total ? '清空全部选择（' + s.total + '）' : '清空全部选择';
-  btn.disabled = !s.total;
-  btn.title = s.total
+  const label = s.total ? '清空全部选择（' + s.total + '）' : '清空全部选择';
+  const tip = s.total
     ? '一次清空：开头钩子 ' + s.hook + ' · 卡片条数 ' + s.cards + ' 张（共 ' + s.copies +
       ' 条）· 指定结尾 ' + s.ends + ' 条 · 结尾钩子 ' + s.endhook
     : '当前没有已选内容';
+  const btn = $('#btnClearHook');
+  if (btn) {
+    btn.textContent = label;
+    btn.disabled = !s.total;
+    btn.title = tip;
+  }
+  // 高光候选区里的同名按钮（面板内一键取消），文案跟批量条保持一致
+  const b2 = $('#btnClearHooks');
+  if (b2) {
+    b2.textContent = s.total ? '一键取消选择（' + s.total + '）' : '一键取消选择';
+    b2.disabled = !s.total;
+    b2.title = tip;
+  }
 }
 
 function clearAllPicks(silent) {
@@ -3004,6 +3043,32 @@ document.addEventListener('keydown', (e) => {
   $('#hookPrefsModal').classList.remove('on');
 });
 $('#btnResetHooks').onclick = () => resetHooks();
+$('#btnPickAllHooks').onclick = () => selectAllHooks();
+$('#btnClearHooks').onclick = () => {
+  const s = clearAllPicks();
+  if (s) toast('已取消全部选择：开头 ' + s.hook + ' · 卡片 ' + s.cards +
+               ' 张（' + s.copies + ' 条）· 指定结尾 ' + s.ends + ' 条');
+};
+
+/* 把一批候选应用到界面：换一批、以及"从头再看"都走这里 */
+function applyHookBatch(hs) {
+  const keep = new Set(hs.map(hookKey));
+  S.highlights = hs;
+  // 旧候选上的删除 / 微调 / 条数：只保留新池里还在的那几条，其余清掉
+  S.hkHide = new Set(Array.from(S.hkHide).filter((k) => keep.has(k)));
+  const sh = {};
+  for (const k in S.hkShift) if (keep.has(k)) sh[k] = S.hkShift[k];
+  S.hkShift = sh;
+  const bt = {};
+  for (const k in S.batch) if (keep.has(k)) bt[k] = S.batch[k];
+  S.batch = bt;
+  // 当前选中的开头如果新一批里还有，就继续选着；没有才放开
+  if (S.hook && S.hook._k && !keep.has(S.hook._k)) S.hook = null;
+  S.batchEnd = {}; S.bendCands = {}; S.plan = null;
+  saveHkEdits(); renderHooks(); renderBatchBar(); renderStats(); draw();
+  return hs.filter((h) => !S.hkHide.has(hookKey(h))).length;
+}
+
 $('#btnShuffleHooks').onclick = async () => {
   const btn = $('#btnShuffleHooks');
   if (btn.dataset.busy) return;
@@ -3011,23 +3076,24 @@ $('#btnShuffleHooks').onclick = async () => {
   const label = btn.textContent;
   btn.textContent = '正在换…';
   try {
-    const r = await api('/api/hooks/reseed', {});
+    let r = await api('/api/hooks/reseed', {});
+    // 池子空了：明确告诉用户，并允许从头再看一遍（不改变当前这一批）
+    if (r && r.exhausted) {
+      const msg = r.msg || '已经把所有高光候选都看过了';
+      if (!r.can_reset) { toast(msg); return; }
+      if (!confirm(msg + '\n\n要从头再看一遍吗？点「确定」重新开始（当前这批的条数会清掉，开头能在新一批里对上就继续保持选中）。')) {
+        toast(msg);
+        return;
+      }
+      r = await api('/api/hooks/reseed', { reset: true });
+    }
     const hs = (r && r.highlights) || [];
     if (!hs.length) throw new Error('没有返回候选');
-    const keep = new Set(hs.map(hookKey));
-    S.highlights = hs;
-    // 旧候选上的删除 / 微调 / 条数：只保留新池里还在的那几条，其余清掉
-    S.hkHide = new Set(Array.from(S.hkHide).filter((k) => keep.has(k)));
-    const sh = {};
-    for (const k in S.hkShift) if (keep.has(k)) sh[k] = S.hkShift[k];
-    S.hkShift = sh;
-    const bt = {};
-    for (const k in S.batch) if (keep.has(k)) bt[k] = S.batch[k];
-    S.batch = bt;
-    S.batchEnd = {}; S.bendCands = {}; S.plan = null; S.hook = null;
-    saveHkEdits(); renderHooks(); renderBatchBar(); renderStats(); draw();
-    const left = hs.filter((h) => !S.hkHide.has(hookKey(h))).length;
-    toast('换了一批：' + left + ' 个开头候选，不满意可以再点一次');
+    const left = applyHookBatch(hs);
+    const more = Number(r.remaining);
+    toast('换了一批：' + left + ' 个开头候选' +
+          (isFinite(more) && more > 0 ? '（候选池还剩 ' + more + ' 条没看过）' : '') +
+          '，不满意可以再点一次');
   } catch (e) {
     toast('换一批失败：' + ((e && e.message) || e), true);
   } finally {

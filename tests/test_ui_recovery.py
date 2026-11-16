@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -44,7 +45,8 @@ ck("$ 对缺失元素返回游离节点", "document.createElement('div')" in JS 
 ck("$ 缺失元素只提示一次", "if (!_MISSING.has(s))" in JS)
 ck("toast 用原生 getElementById（不能吃游离节点）", "let el = document.getElementById('toast');" in JS)
 ck("脚本末尾标记 __APP_READY__", "window.__APP_READY__ = true;" in JS)
-ck("构建标记已更新", "'2026-11-13.1'" in JS)
+ck("构建标记已更新", re.search(r"__APP_BUILD__ = '\d{4}-\d{2}-\d{2}\.\d+'", JS) is not None
+   and "'2026-11-13.1'" not in JS)
 
 # ── B 任务失败收尾 ───────────────────────────────────────────
 ck("endScan 统一收尾函数存在", "function endScan()" in JS)

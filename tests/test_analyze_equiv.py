@@ -14,7 +14,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from engine import analyze as A  # noqa: E402
 
-PROJ = ROOT / "projects" / "9273_20261111_5694.json"
+def _any_project() -> Path | None:
+    """随便找一部已导入的剧当语料；固定的文件名可能在别的机器上不存在。"""
+    cands = sorted((ROOT / "projects").glob("*.json"),
+                   key=lambda p: p.stat().st_size, reverse=True)
+    return cands[0] if cands else None
+
+
+PROJ = _any_project() or (ROOT / "projects" / "__missing__.json")
 CHECKS: list[dict] = []
 
 

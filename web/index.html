@@ -138,8 +138,10 @@
       <div class="hkbar">
         <div class="seg hkseg" id="hkFilter"></div>
         <span class="spacer"></span>
+        <button class="btn xs ghost" id="btnPickAllHooks" title="把当前筛选下的候选全部选为开头，每张卡各出 1 条；条数可以在卡片右下角改">全选</button>
+        <button class="btn xs ghost" id="btnClearHooks" title="一次取消所有已选：开头钩子、卡片条数、指定结尾、结尾钩子">一键取消选择</button>
         <button class="btn xs ghost" id="btnHookPrefs" title="按类型开关、调权重，控制候选的显示优先级（只影响本机浏览，不改变识别与出片）">类型设置</button>
-        <button class="btn xs ghost" id="btnShuffleHooks" title="同一部剧也能换一批高光开头候选：评分抖动 ±8%，好开头依然排前面，但入选的那 18 条会换掉 10 条上下。种子写进项目，下次打开还是这一批">换一批</button>
+        <button class="btn xs ghost" id="btnShuffleHooks" title="从还没展示过的高光画面里重新抽一批（已看过的不会再出现）；全部看过时会提示">换一批</button>
         <button class="btn xs ghost" id="btnAddHook">＋ 手动加</button>
         <button class="btn xs ghost" id="btnResetHooks" hidden title="清掉人工删除与位置微调，回到自动识别的结果">恢复原样</button>
       </div>

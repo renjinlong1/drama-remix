@@ -1,0 +1,119 @@
+{
+  "checks": [
+    {
+      "name": "初始候选非空",
+      "ok": true,
+      "detail": "24"
+    },
+    {
+      "name": "初始项目没有展示记录",
+      "ok": true,
+      "detail": "None"
+    },
+    {
+      "name": "第 1 批不与之前的批次重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 1 批有足够候选",
+      "ok": true,
+      "detail": "24"
+    },
+    {
+      "name": "第 2 批不与之前的批次重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 2 批有足够候选",
+      "ok": true,
+      "detail": "24"
+    },
+    {
+      "name": "第 3 批不与之前的批次重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 3 批有足够候选",
+      "ok": true,
+      "detail": "24"
+    },
+    {
+      "name": "第 4 批不与之前的批次重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 4 批有足够候选",
+      "ok": true,
+      "detail": "20"
+    },
+    {
+      "name": "第 5 批不与之前的批次重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 5 批有足够候选",
+      "ok": true,
+      "detail": "8"
+    },
+    {
+      "name": "连续换批最终会抽干",
+      "ok": true,
+      "detail": "12 次内没抽干"
+    },
+    {
+      "name": "抽干时给出提示文案",
+      "ok": true,
+      "detail": "没看过的候选只剩 1 个，凑不成新的一批了"
+    },
+    {
+      "name": "抽干时保留当前这一批",
+      "ok": true,
+      "detail": "返回的不是当前批"
+    },
+    {
+      "name": "抽干时允许从头再看",
+      "ok": true,
+      "detail": "{'ok': False, 'exhausted': True, 'can_reset': True, 'msg': '没看过的候选只剩 1 个，凑不成新的一批了', 'left': 1, 'shown_total': 124, 'highlights': [{'g0': 1091.54, 'g1': 1102.6, 'dur': 11.06, 'ep': 13, 'text': '天气不错，出去走走 我明白了，你别担心', 'score': 5.25, 'act': 3.4, 'susp': 0.0, 'intim': 0.0, 'at_end': False, 'short_strong': False, 'kind': '剧情节点', 'hits': [], 'beats': [74, 75], 'types': ['tension', 'performance'], 'primary_type': 'tension', 'primary_label': '情感张力', 'subtype': '', 'confidence': 0.907, 'signals': {'dialog': 0.119, 'reveal': 0.0, 'suspense': 0.0, 'intimacy': 0.0, 'motion': 0.014, 'audio': 0.714, 'intensity': 0.4, 'stillness': 1.0, 'position': 0.4}, 'evidence': [{'kind': 'visual', 'strength': 0.4, 'note': '画面冲击 / 运动强度'}, {'kind': 'audio', 'strength': 0.714, 'note': '声音强度'}], 'source': 'fusion', 'has_dialog': True, 'rank_score': 6.0, 'rank_reason': '情感张力 · 多源印证 · 稀缺加成 · 第13集', 'dedup_key': '13@546', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'front': True, 'id': 0}, {'g0': 1181.54, 'g1': 1198.2, 'dur': 16.66, 'ep': 14, 'text': '我明白了，你别担心 好，那就这样定了 我们走吧，今天先到这里', 'score': 5.16, 'act': 3.4, 'susp': 0.0, 'intim': 0.0, 'at_end': False, 'short_strong': False, 'kind': '剧情节点', 'hits': [], 'beats': [80, 81, 82], 'types': ['tension', 'performance'], 'primary_type': 'tension', 'primary_label': '情感张力', 'subtype': '', 'confidence': 0.907, 'signals': {'dialog': 0.188, 'reveal': 0.0, 'suspense': 0.0, 'intimacy': 0.0, 'motion': 0.014, 'audio': 0.714, 'intensity': 0.4, 'stillness': 1.0, 'position': 0.35}, 'evidence': [{'kind': 'visual', 'strength': 0.4, 'note': '画面冲击 / 运动强度'}, {'kind': 'audio', 'strength': 0.714, 'note': '声音强度'}], 'source': 'fusion', 'has_dialog': True, 'rank_score': 5.88, 'rank_reason': '情感张力 · 多源印证 · 稀缺加成 · 第14集', 'dedup_key': '14@591', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'front': True, 'id': 1}, {'g0': 1265.94, 'g1': 1282.6, 'dur': 16.66, 'ep': 15, 'text': '我明白了，你别担心 好，那就这样定了 我们走吧，今天先到这里', 'score': 5.16, 'act': 3.4, 'susp': 0.0, 'intim': 0.0, 'at_end': False, 'short_strong': False, 'kind': '剧情节点', 'hits': [], 'beats': [85, 86, 87], 'types': ['tension', 'performance'], 'primary_type': 'tension', 'primary_label': '情感张力', 'subtype': '', 'confidence': 0.907, 'signals': {'dialog': 0.188, 'reveal': 0.0, 'suspense': 0.0, 'intimacy': 0.0, 'motion': 0.014, 'audio': 0.714, 'intensity': 0.4, 'stillness': 1.0, 'position': 0.3}, 'evidence': [{'kind': 'visual', 'strength': 0.4, 'note': '画面冲击 / 运动强度'}, {'kind': 'audio', 'strength': 0.714, 'note': '声音强度'}], 'source': 'fusion', 'has_dialog': True, 'rank_score': 5.88, 'rank_reason': '情感张力 · 多源印证 · 稀缺加成 · 第15集', 'dedup_key': '15@633', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'front': True, 'id': 2}, {'g0': 1553.54, 'g1': 1570.2, 'dur': 16.66, 'ep': 18, 'text': '这件事以后再说吧 天气不错，出去走走 我明白了，你别担心', 'score': 5.54, 'act': 3.4, 'susp': 0.0, 'intim': 0.0, 'at_end': False, 'short_strong': False, 'kind': '剧情节点', 'hits': [], 'beats': [104, 105, 106], 'types': ['tension', 'performance'], 'primary_type': 'tension', 'primary_label': '情感张力', 'subtype': '', 'confidence': 0.907, 'signals': {'dialog': 0.175, 'reveal': 0.0, 'suspense': 0.0, 'intimacy': 0.0, 'motion': 0.014, 'audio': 0.714, 'intensity': 0.4, 'stillness': 1.0, 'position': 0.15}, 'evidence': [{'kind': 'visual', 'strength': 0.4, 'note': '画面冲击 / 运动强度'}, {'kind': 'audio', 'strength': 0.714, 'note': '声音强度'}], 'source': 'fusion', 'has_dialog': True, 'rank_score': 6.29, 'rank_reason': '情感张力 · 多源印证 · 稀缺加成 · 第18集', 'dedup_key': '18@777', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'id': 3}, {'g0': 1643.54, 'g1': 1654.6, 'dur': 11.06, 'ep': 19, 'text': '天气不错，出去走走 我明白了，你别担心', 'score': 5.25, 'act': 3.4, 'susp': 0.0, 'intim': 0.0, 'at_end': False, 'short_strong': False, 'kind': '剧情节点', 'hits': [], 'beats': [110, 111], 'types': ['tension', 'performance'], 'primary_type': 'tension', 'primary_label': '情感张力', 'subtype': '', 'confidence': 0.907, 'signals': {'dialog': 0.119, 'reveal': 0.0, 'suspense': 0.0, 'intimacy': 0.0, 'motion': 0.014, 'audio': 0.714, 'intensity': 0.4, 'stillness': 1.0, 'position': 0.1}, 'evidence': [{'kind': 'visual', 'strength': 0.4, 'note': '画面冲击 / 运动强度'}, {'kind': 'audio', 'strength': 0.714, 'note': '声音强度'}], 'source': 'fusion', 'has_dialog': True, 'rank_score': 5.95, 'rank_reason': '情感张力 · 多源印证 · 稀缺加成 · 第19集', 'dedup_key': '19@822', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'id': 4}, {'g0': 1355.94, 'g1': 1372.6, 'dur': 16.66, 'ep': 16, 'text': '好，那就这样定了 我们走吧，今天先到这里 你先坐下，我慢慢跟你说', 'score': 5.17, 'act': 3.4, 'susp': 0.0, 'intim': 0.0, 'at_end': False, 'short_strong': False, 'kind': '剧情节点', 'hits': [], 'beats': [91, 92, 93], 'types': ['tension', 'performance'], 'primary_type': 'tension', 'primary_label': '情感张力', 'subtype': '', 'confidence': 0.907, 'signals': {'dialog': 0.2, 'reveal': 0.0, 'suspense': 0.0, 'intimacy': 0.0, 'motion': 0.014, 'audio': 0.714, 'intensity': 0.4, 'stillness': 1.0, 'position': 0.25}, 'evidence': [{'kind': 'visual', 'strength': 0.4, 'note': '画面冲击 / 运动强度'}, {'kind': 'audio', 'strength': 0.714, 'note': '声音强度'}], 'source': 'fusion', 'has_dialog': True, 'rank_score': 5.88, 'rank_reason': '情感张力 · 多源印证 · 稀缺加成 · 第16集', 'dedup_key': '16@678', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'id': 5}, {'g0': 1462.74, 'g1': 1468.2, 'dur': 5.46, 'ep': 17, 'text': '天气不错，出去走走', 'score': 4.89, 'act': 3.4, 'susp': 0.0, 'intim': 0.0, 'at_end': False, 'short_strong': False, 'kind': '剧情节点', 'hits': [], 'beats': [100], 'types': ['tension', 'performance'], 'primary_type': 'tension', 'primary_label': '情感张力', 'subtype': '', 'confidence': 0.844, 'signals': {'dialog': 0.056, 'reveal': 0.0, 'suspense': 0.0, 'intimacy': 0.0, 'motion': 0.014, 'audio': 0.714, 'intensity': 0.4, 'stillness': 0.807, 'position': 0.2}, 'evidence': [{'kind': 'visual', 'strength': 0.4, 'note': '画面冲击 / 运动强度'}, {'kind': 'audio', 'strength': 0.714, 'note': '声音强度'}], 'source': 'fusion', 'has_dialog': True, 'rank_score': 5.56, 'rank_reason': '情感张力 · 多源印证 · 稀缺加成 · 第17集', 'dedup_key': '17@731', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'id': 6}, {'g0': 1715.94, 'g1': 1721.4, 'dur': 5.46, 'ep': 20, 'text': '天气不错，出去走走', 'score': 4.89, 'act': 3.4, 'susp': 0.0, 'intim': 0.0, 'at_end': False, 'short_strong': False, 'kind': '剧情节点', 'hits': [], 'beats': [115], 'types': ['tension', 'performance'], 'primary_type': 'tension', 'primary_label': '情感张力', 'subtype': '', 'confidence': 0.844, 'signals': {'dialog': 0.056, 'reveal': 0.0, 'suspense': 0.0, 'intimacy': 0.0, 'motion': 0.014, 'audio': 0.714, 'intensity': 0.4, 'stillness': 0.807, 'position': 0.05}, 'evidence': [{'kind': 'visual', 'strength': 0.4, 'note': '画面冲击 / 运动强度'}, {'kind': 'audio', 'strength': 0.714, 'note': '声音强度'}], 'source': 'fusion', 'has_dialog': True, 'rank_score': 5.53, 'rank_reason': '情感张力 · 多源印证 · 稀缺加成 · 第20集', 'dedup_key': '20@858', 'quality': {'playable': True, 'first_frame_ok': True, 'complete': True}, 'id': 7}]}"
+    },
+    {
+      "name": "抽干后没有可换的剩余",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "重开项目回到最后一批",
+      "ok": true,
+      "detail": "['13@1091.5', '14@1181.5', '15@1265.9'] vs ['13@1091.5', '14@1181.5', '15@1265.9']"
+    },
+    {
+      "name": "重置后重新从第一批开始",
+      "ok": true,
+      "detail": "['16@1375.8', '2@101.5', '7@545.9'] vs ['16@1375.8', '2@101.5', '7@545.9']"
+    },
+    {
+      "name": "重置后展示记录清零重算",
+      "ok": true,
+      "detail": "24"
+    },
+    {
+      "name": "候选身份按 0.1 秒取整",
+      "ok": true,
+      "detail": "3@10.0"
+    },
+    {
+      "name": "不同起点是不同候选",
+      "ok": true,
+      "detail": "3@10.1"
+    }
+  ],
+  "total": 22,
+  "failed": 0,
+  "batches": 6,
+  "shown": 124,
+  "time": "2026-11-16 15:30:08"
+}

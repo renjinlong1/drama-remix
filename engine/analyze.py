@@ -25,6 +25,8 @@ LEX = {
         "集团", "董事", "董事长", "总裁", "继承人", "千金", "少爷", "夫人", "大小姐",
         "原来", "竟然", "居然", "其实", "身份", "亲子鉴定", "遗嘱", "股权", "收购",
         "破产", "家产", "真实身份", "我的女儿", "我的儿子", "亲生", "养女", "替我",
+        # 「当年被赶出家门的人回来了」这类身世揭晓，以前一个词都命不中
+        "赶出家门", "逐出家门", "原来是你", "竟然是", "真面目", "真身",
     ]),
     "reversal": (3.0, [
         "没想到", "想不到", "三年后", "五年后", "十年后", "回国", "归来", "重生", "穿越",
@@ -303,6 +305,8 @@ def attach_acts(beats: list[dict], acts: list[dict] | None,
     if not acts:
         for b in beats:
             b.setdefault("act", 0.0)
+            b.setdefault("aud", 0.0)
+            b.setdefault("vis", 0.0)
         return
     # 先按集分桶：以前每个 beat 都要遍历全剧 300+ 个动作点，40 集就是 20 万次比较
     by_ep: dict[int, list[dict]] = {}
@@ -310,6 +314,8 @@ def attach_acts(beats: list[dict], acts: list[dict] | None,
         by_ep.setdefault(a["ep"], []).append(a)
     for b in beats:
         best = 0.0
+        best_a = 0.0
+        best_v = 0.0
         n = 0
         kinds: list[str] = []
         for a in by_ep.get(b["ep"], ()):
@@ -318,11 +324,19 @@ def attach_acts(beats: list[dict], acts: list[dict] | None,
             n += 1
             if a["score"] > best:
                 best = a["score"]
-            if a.get("v", 0) >= 0.5:
+            av = float(a.get("a", 0.0))
+            vv = float(a.get("v", 0.0))
+            if av > best_a:
+                best_a = av
+            if vv > best_v:
+                best_v = vv
+            if vv >= 0.5:
                 kinds.append("动作")
-            elif a.get("a", 0) >= 0.8:
+            elif av >= 0.8:
                 kinds.append("爆发")
         b["act"] = round(best, 3)
+        b["aud"] = round(best_a, 3)      # 声音冲击：用来区分"真在吵"和"配乐一直很响"
+        b["vis"] = round(best_v, 3)      # 画面冲击：动作幅度
         b["actn"] = n
         b["act_kind"] = kinds[0] if kinds else ("爆发" if best else "")
 
@@ -408,13 +422,19 @@ def _mk_beat(ep: dict, group: list[dict], lead: float, tail: float) -> dict:
     }
 
 
-def _hook_kind(win: list[dict], text: str, susp: float) -> str:
-    """给候选贴一个"为什么它算高光"的标签，方便一眼挑选。"""
-    act = max((b.get("act", 0.0) for b in win), default=0.0)
+def _hook_kind(win: list[dict], text: str, susp: float,
+               act_n: float | None = None) -> str:
+    """给候选贴一个"为什么它算高光"的标签，方便一眼挑选。
+
+    act_n 是按本剧分布归一后的冲击强度（1.0 ≈ 本剧常态），
+    直接用原始分数会因为不同剧的音量/运镜基准不同而整部剧都变成"动作冲突"。
+    """
+    if act_n is None:
+        act_n = max((b.get("act", 0.0) for b in win), default=0.0) / 1.6
     has_conflict = any(h in LEX_CONFLICT for b in win for h in b.get("hits", []))
     has_reveal = any(b.get("hits") and set(b["hits"]) & set(LEX_REVEAL)
                      for b in win)
-    if act >= 2.2:
+    if act_n >= 1.35:
         return "动作冲突" if has_conflict or any(b.get("act_kind") == "动作" for b in win) else "爆发点"
     if has_conflict:
         return "台词冲突"
@@ -594,6 +614,14 @@ def _clamp01(x: float) -> float:
     return round(min(1.0, max(0.0, float(x))), 3)
 
 
+def _pct(values: list[float], q: float, default: float) -> float:
+    """取分位值（忽略 0）。用来给"冲击强度"定本剧自己的基准线。"""
+    vals = sorted(v for v in values if v and v > 0.0)
+    if not vals:
+        return default
+    return float(vals[min(len(vals) - 1, int(len(vals) * q))])
+
+
 def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
                        ep_count: int) -> dict:
     """给一条候选补齐类型、证据、质量与排序字段（原地修改并返回）。
@@ -609,14 +637,15 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
     ep = int(c.get("ep", 1))
     v = float(c.pop("_v", 0.0))
     a = float(c.pop("_a", 0.0))
-    burst = float(c.pop("_burst", c.get("act", 0.0)))
+    # 没有归一值时按 1.6 的常态基准折算，别让不同剧的音量基准把强度顶满
+    burst = float(c.pop("_burst", float(c.get("act", 0.0)) / 1.6))
     has_dialog = bool(text.strip() or c.get("beats"))
 
     dialog = _clamp01(len(hits & conflict_words) / 2.0 + min(1.0, len(text) / 40.0) * 0.25)
     reveal = _clamp01(len(hits & reveal_words) / 1.5)
     intim = _clamp01(float(c.get("intim", 0.0)))
     susp_s = _clamp01(float(c.get("susp", 0.0)) / 3.0)
-    motion = _clamp01(v / 1.4 if v else float(c.get("act", 0.0)) / 2.5)
+    motion = _clamp01(v / 1.4 if v else burst / 2.5)
     audio = _clamp01(a / 1.4 if a else 0.0)
     intensity = _clamp01(burst / 2.5)
     stillness = _clamp01(1.0 - motion - 0.25 * audio + (0.2 if dur >= 6.0 else 0.0))
@@ -632,7 +661,7 @@ def classify_candidate(c: dict, *, conflict_words: set, reveal_words: set,
     types: list[str] = []
     if motion >= 0.55 and intensity >= 0.5 and audio >= 0.25:
         types.append("energy")
-    if motion >= 0.30 or intensity >= 0.60:
+    if motion >= 0.42 or intensity >= 0.62:
         types.append("action")
     if dialog >= 0.35:
         types.append("dialog")
@@ -835,10 +864,17 @@ def interleave_types(picked: list[dict]) -> list[dict]:
 
 
 def apply_type_quotas(picked: list[dict], cands: list[dict], goal: int,
-                      min_per_type: int = 1, max_per_type: int = 4) -> list[dict]:
-    """配额优先于纯分数：每类先保底 N 条、再限制上限，最后才比强度。"""
+                      min_per_type: int = 1, max_per_type: int | None = None) -> list[dict]:
+    """配额优先于纯分数：每类先保底 N 条、再限制上限，最后才比强度。
+
+    上限按候选总数取比例（至少 4 条）：固定 4 条会在「整部剧都是台词冲突」
+    的片子上把真正的高光挤出去——实测 24 条候选里有 8 条台词钩子时，
+    后 4 条会被配额换成 6 分级别的凑数片段。补位还带质量闸门：
+    换进来的至少要有被换掉那条一半的分，宁可不换也不拉低准头。
+    """
     if not picked:
         return picked
+    cap = max_per_type if max_per_type is not None else max(4, int(round(goal * 0.45)))
     chosen = {id(c) for c in picked}
     # 全池只按分数排一次。以前每个 pool() 都 sorted 一遍，24 轮下来是最大热点
     # （1255 个候选 × 24 次排序），而调用方每次只需要「最优的那一条」。
@@ -868,7 +904,7 @@ def apply_type_quotas(picked: list[dict], cands: list[dict], goal: int,
         for p in picked:
             t = p.get("primary_type") or "other"
             counts[t] = counts.get(t, 0) + 1
-        over = next((t for t, n in counts.items() if n > max_per_type), None)
+        over = next((t for t, n in counts.items() if n > cap), None)
         if over is None:
             break
         victim = min((p for p in picked if (p.get("primary_type") or "other") == over),
@@ -876,6 +912,8 @@ def apply_type_quotas(picked: list[dict], cands: list[dict], goal: int,
         repl = pool(exclude=over)
         if repl is None:
             break
+        if repl.get("rank_score", 0.0) < victim.get("rank_score", 1.0) * 0.55:
+            break                              # 补位的明显更差：宁可少一条也别拉低准头
         picked.remove(victim)
         picked.append(repl)
         chosen.add(id(repl))
@@ -891,10 +929,21 @@ def apply_type_quotas(picked: list[dict], cands: list[dict], goal: int,
             if repl is None:
                 break
             victim = min(picked, key=lambda p: p["rank_score"])
+            if repl.get("rank_score", 0.0) < victim.get("rank_score", 1.0) * 0.5:
+                break                          # 为了凑类型把分数砍半，不值得
             picked.remove(victim)
             picked.append(repl)
             chosen.add(id(repl))
     return picked
+
+
+def hook_key(c: dict) -> str:
+    """候选的稳定身份：和前端 hookKey 同一格式（集号@全局秒数，保留 1 位小数）。
+
+    前端微调位置会另存 hkShift，这里用的是未微调的原始起点，换一批 / 记录已展示
+    都按它去重，不会因为用户挪了半秒就把同一段当成新画面。
+    """
+    return f"{int(c['ep'])}@{float(c['g0']):.1f}"
 
 
 def find_highlights(beats: list[dict], top_k: int = 18,
@@ -903,7 +952,9 @@ def find_highlights(beats: list[dict], top_k: int = 18,
                     extra_visual: list[dict] | None = None,
                     visual_reserve: int = 3, type_quota: int = 1,
                     front_eps: int = FRONT_EPS,
-                    front_boost: float = FRONT_BOOST) -> list[dict]:
+                    front_boost: float = FRONT_BOOST,
+                    exclude_keys: set[str] | None = None,
+                    want_pool: bool = False):
     """找出 15-20 个高光开头候选。
 
     一段剧情算不算高光，看三件事：
@@ -925,43 +976,83 @@ def find_highlights(beats: list[dict], top_k: int = 18,
     eps_last: dict[int, dict] = {}
     for b in beats:
         eps_last[b["ep"]] = b
+    # 冲击强度按本剧自身分布归一：不同剧的配乐音量、运镜幅度差好几倍，
+    # 用固定阈值会让整部剧的候选全被判成「动作冲突」（实测一部 44 集的剧
+    # 941 个候选里 906 条都是 action，台词型钩子一条都进不了池）。
+    # 归一之后只有明显高于本剧常态的段落才算动作 / 爆发。
+    act_ref = max(1.0, _pct([float(b.get("act") or 0.0) for b in beats], 0.75, 1.6))
+    aud_ref = max(0.8, _pct([float(b.get("aud") or 0.0) for b in beats], 0.75, 0.8))
     for i in range(n):
-        for take in (1, 2, 3, 4):
+        for take in (1, 2, 3, 4, 5):
             j = i + take
             if j > n:
                 break
             win = beats[i:j]
             if len({b["ep"] for b in win}) > 1:
                 break
-            dur = win[-1]["g1"] - win[0]["g0"]
+            g0, g1 = win[0]["g0"], win[-1]["g1"]
+            dur = g1 - g0
             if dur > max_dur:
                 break
-            if dur < min_dur:
+            if dur < 2.6:
                 continue
             text = " ".join(b["text"] for b in win)
-            raw = sum(b["score"] for b in win)
-            act = max(b.get("act", 0.0) for b in win)
             susp, shits = suspense_of(text)
+            hits = sorted(set(shits) | {h for b in win for h in b.get("hits", [])})
+            intim = _intimacy_score(text)
             punct = min(1.6, len(_PUNCT.findall(text)) * 0.35)
+            act = max(b.get("act", 0.0) for b in win)
+            act_n = min(2.6, act / act_ref)
+            aud_n = min(2.0, max(b.get("aud", 0.0) for b in win) / aud_ref)
+            vis = max(b.get("vis", 0.0) for b in win)
+            # 短促但够炸：2.6-4.5 秒的一句"滚出去""你算什么东西"以前整段被丢掉，
+            # 而这类恰恰是用户最想拿来当第一帧的。放宽门槛，但要求有硬信号。
+            short_strong = dur < min_dur and (
+                act_n >= 0.85 or intim >= 0.5 or punct >= 1.4
+                or sum(1 for h in hits if h in LEX_CONFLICT) >= 2)
+            if dur < min_dur:
+                if not short_strong:
+                    continue
+                # 往前补一小段入戏（最多 2 秒，且不跨过本集开头），补成能用的长度
+                floor = 0.0
+                if i > 0 and beats[i - 1]["ep"] != win[0]["ep"]:
+                    floor = beats[i - 1]["g1"]
+                g0 = max(floor, g0 - min(2.0, min_dur - dur))
+                dur = g1 - g0
+                if dur < 2.8:
+                    continue
             last = eps_last.get(win[0]["ep"])
             at_end = bool(last) and win[-1]["id"] == last["id"]
+            # 长度偏置校正：直接相加会让"1 句狠话 + 4 句废话"的 20 秒长窗
+            # 永远压过"整段都是冲突"的 6 秒短窗。以最高那一拍为主、其余折半计入。
+            parts = [float(b["score"]) for b in win]
+            raw = max(parts) + 0.5 * (sum(parts) - max(parts))
+            # 冲击前置：开头 4 秒内就打起来，比"铺垫 8 秒才动手"更适合当钩子。
+            # 以前只看整段总分，"安静铺垫 + 一句狠话"和"一巴掌开局"得分接近。
+            peak_t = max(win, key=lambda b: (float(b.get("act") or 0.0), -b["g0"]))["g0"]
+            lead_bonus = act_n * max(0.0, 1.0 - max(0.0, float(peak_t) - g0) / 4.0)
             # 密度加权：同样信息量，越短越紧
             score = (raw * (1.0 + min(0.5, 4.0 / max(1.0, dur))) * 0.95
-                     + act * 2.4 + susp * 0.8 + punct * 0.6
+                     + act_n * 2.2 + aud_n * 0.6 + susp * 0.8 + punct * 0.6
+                     + 1.1 * lead_bonus
+                     + (0.7 if short_strong else 0.0)
                      + (1.6 if at_end else 0.0))
-            hits = sorted(set(shits) | {h for b in win for h in b.get("hits", [])})
             cands.append({
-                "g0": win[0]["g0"], "g1": win[-1]["g1"],
+                "g0": g0, "g1": g1,
                 "dur": round(dur, 3), "ep": win[0]["ep"],
                 "text": text[:200],
                 "score": round(score, 2),
                 "act": round(act, 2),
                 "susp": round(susp, 2),
-                "intim": _intimacy_score(text),
+                "intim": intim,
                 "at_end": at_end,
-                "kind": _hook_kind(win, text, susp),
+                "short_strong": bool(short_strong),
+                "kind": _hook_kind(win, text, susp, act_n),
                 "hits": hits[:6],
                 "beats": [b["id"] for b in win],
+                "_v": round(vis, 3),
+                "_a": round(aud_n, 3),
+                "_burst": round(act_n, 3),
             })
 
     # 视觉候选的分数来自另一套量纲（事件强度约 0.85~3），直接混排会被台词分
@@ -970,12 +1061,19 @@ def find_highlights(beats: list[dict], top_k: int = 18,
         ds = sorted(c["score"] for c in cands)
         # 锚点取台词候选的高分位（P85）而不是全体中位数：真正入池的本来就是
         # 高分段，用中位数会把视觉候选永远压在池底，只能靠保底位露面。
-        anchor = max(4.0, ds[min(len(ds) - 1, int(len(ds) * 0.75))] if ds else 12.0)
+        # 锚点取台词候选的 P90：真正入池的本来就是高分段。以前用 P75 并把视觉
+        # 候选封顶在锚点，结果强打斗永远排在十几条普通台词后面（实测前 10 条
+        # 一条画面钩子都没有）。
+        anchor = max(4.0, ds[min(len(ds) - 1, int(len(ds) * 0.90))] if ds else 12.0)
         for vc in extra_visual:
             c = dict(vc)                     # 别改动调用方持有的对象
             raw = float(c.pop("_vscore", 0.0))
             t = min(1.0, max(0.0, (raw - 0.85) / 2.15))
-            c["score"] = round(min(anchor, anchor * (0.75 + 0.40 * t)), 2)
+            # 0.78~1.10 倍锚点：强的画面钩子能进第一梯队，弱的仍排在后面
+            c["score"] = round(anchor * (0.78 + 0.32 * t), 2)
+            # 视觉候选的冲击 / 声音也走同一套归一，"动作"标签才有可比性
+            c["_burst"] = round(min(2.6, float(c.get("_burst") or 0.0) / act_ref), 3)
+            c["_a"] = round(min(2.0, float(c.get("_a") or 0.0) / aud_ref), 3)
             cands.append(c)
 
     # 统一补齐类型 / 证据 / 质量 / 排序分；不合格的直接挡在门外（L0 轻量门槛）
@@ -1018,6 +1116,12 @@ def find_highlights(beats: list[dict], top_k: int = 18,
             c["_eff"] = base
     cands.sort(key=lambda c: (-c["_eff"], c["g0"]))
 
+    # 「换一批」：把已经展示过的候选整批排除，再从剩下没露过面的里组一批。
+    # 放在排序之后、配额之前，剩下的池子仍按原规则做去重 / 配额 / 前段密度。
+    if exclude_keys:
+        cands = [c for c in cands if hook_key(c) not in exclude_keys]
+    pool_total = len(cands)
+
     def pick(want: int, per_ep: int, gap: float) -> list[dict]:
         picked: list[dict] = []
         cnt: dict[int, int] = {}
@@ -1054,7 +1158,9 @@ def find_highlights(beats: list[dict], top_k: int = 18,
         return picked
 
     # 一级级放宽，直到够数。先"铺开"，再"堆密"——宁可每集一条也不要把 18 条挤在两集里
-    goal = min(top_k, max(min_keep, len({b["ep"] for b in beats})))
+    # 15-20 集的剧按 1.2 倍集数给名额：只有 1 倍时，某一集多挑一条就会有另一集
+    # 整集没候选（实测 20 集的剧正好漏掉 4 个真实高光）。24 集以上仍封顶 24。
+    goal = min(top_k, max(min_keep, int(round(len({b["ep"] for b in beats}) * 1.2))))
     picked: list[dict] = []
     for per_ep, gap in ((2, 5.0), (3, 3.0), (4, 1.5), (99, 0.4)):
         picked = pick(goal, per_ep, gap)
@@ -1075,6 +1181,8 @@ def find_highlights(beats: list[dict], top_k: int = 18,
         for k in ("_eff", "_v", "_a", "_burst", "_vscore"):
             p.pop(k, None)
         p["id"] = i
+    if want_pool:
+        return picked, pool_total
     return picked
 
 
@@ -1151,6 +1259,24 @@ def find_endings(beats: list[dict], total: float, top_k: int = 8,
     return picked
 
 
+def hook_batch(proj: dict, exclude_keys: set[str] | None = None,
+               seed: int | None = None, top_k: int = 24,
+               min_keep: int = 15) -> tuple[list[dict], int]:
+    """按排除集合组一批高光开头（换一批用）。
+
+    返回 (候选, 排除之后池子里还剩多少条候选)。界面用剩余数告诉用户
+    "候选池还剩 N 条没看过"，而不是只报本批有几条。
+    """
+    beats = segment_beats(proj)
+    acts = proj.get("acts") or []
+    attach_acts(beats, acts)
+    visual = find_visual_highlights(proj, beats, acts)
+    sd = proj.get("hook_seed") if seed is None else seed
+    return find_highlights(beats, top_k=top_k, min_keep=min_keep, seed=sd,
+                           extra_visual=visual, exclude_keys=exclude_keys,
+                           want_pool=True)
+
+
 def analyze(proj: dict, seed: int | None = None) -> dict:
     beats = segment_beats(proj)
     acts = proj.get("acts") or []
@@ -1162,8 +1288,21 @@ def analyze(proj: dict, seed: int | None = None) -> dict:
     total = proj["total"]
     # 钩子池的随机种子跟着项目走：项目里存了就每次一致，没有（老项目）就保持原来的确定性排序
     sd = proj.get("hook_seed") if seed is None else seed
-    hl = find_highlights(beats, top_k=24, min_keep=15, seed=sd,
-                         extra_visual=visual)
+    # 换过一批之后，重开项目要回到**最后展示的那一批**，而不是又回到第一屏。
+    # 直接存下那一批的内容：只存 key 再重算的话，排除旧候选会改变去重/配额的
+    # 补位顺序，回来的一批和用户刚看到的对不上。
+    cur_items = proj.get("hook_current_items") or []
+    hl = None
+    if cur_items and all(1 <= int(c.get("ep", 0)) <= len(proj["episodes"])
+                         and float(c.get("g1", 0)) <= total + 1.0 for c in cur_items):
+        hl = [dict(c) for c in cur_items]
+        for i, h in enumerate(hl):
+            h["id"] = i
+    if not hl:
+        shown = set(proj.get("hook_shown") or [])
+        current = set(proj.get("hook_current") or [])
+        hl = find_highlights(beats, top_k=24, min_keep=15, seed=sd,
+                             extra_visual=visual, exclude_keys=shown - current)
     return {
         "beats": beats,
         "highlights": hl,

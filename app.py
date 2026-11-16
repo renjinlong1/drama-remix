@@ -456,24 +456,56 @@ def state():
 
 
 @app.post("/api/hooks/reseed")
-def hooks_reseed():
-    """换一批高光开头候选。
+def hooks_reseed(body: dict = Body(default={})):
+    """换一批高光开头候选：真正从**没看过**的画面里再抽一批。
 
-    同一部剧、同一台电脑点多少次都会换出不同的候选池（评分只抖动 ±6%，
-    不会把明显更差的段落顶上来）；种子写进项目文件，下次打开还是这一批。
+    以前只是把已识别的候选重新排序，第 2 次点往往还是那 18 条（只是顺序变了）。
+    现在把展示过的候选整批排除，从剩下的池子里重新组一批；池子空了就明确
+    告诉用户没有新的了，并允许一键从头再看。
     """
     with LOCK:
         p = STATE["project"]
+        a = STATE["analysis"]
     if not p:
         raise HTTPException(400, "还没导入剧集")
-    p["hook_seed"] = random.randint(1, 2 ** 31 - 1)
+
+    reset = bool(body.get("reset"))
+    cur = (a or {}).get("highlights") or []
+    if reset:
+        shown: set[str] = set()
+    else:
+        # 当前这批也算"已展示"：第一次换一批时它还没进过 hook_shown
+        shown = set(p.get("hook_shown") or [])
+        shown |= {analyzemod.hook_key(c) for c in cur}
+
+    hl, pool = analyzemod.hook_batch(p, exclude_keys=shown or None)
+    # 少于 3 条不值得换一屏，按"没新的了"处理，但把它报出来
+    if not reset and len(hl) < 3:
+        # 不换屏，只把"当前这批"记进已展示，免得下次又把同一批当成没看过
+        p["hook_shown"] = sorted(shown)
+        projmod.save(p)
+        left = max(0, pool)
+        if left:
+            msg = f"没看过的候选只剩 {left} 个，凑不成新的一批了"
+        else:
+            msg = f"这部剧能用的高光候选已经全部展示过了（共 {len(shown)} 个）"
+        return {"ok": False, "exhausted": True, "can_reset": True,
+                "msg": msg, "left": left, "shown_total": len(shown),
+                "highlights": cur}
+
+    p["hook_shown"] = sorted(shown | {analyzemod.hook_key(c) for c in hl})
+    p["hook_current"] = [analyzemod.hook_key(c) for c in hl]
+    p["hook_current_items"] = hl
     projmod.save(p)
-    a = analyzemod.analyze(p)
     with LOCK:
-        STATE["analysis"] = a
-        STATE["plan"] = None        # 钩子换了，旧方案的开头已经不是这一批
+        meta = dict((a or {}).get("hook_meta") or {})
+        meta["front_count"] = sum(1 for c in hl if c.get("front"))
+        STATE["analysis"] = {**(a or {}), "highlights": hl, "hook_meta": meta}
+        # 钩子换了，旧方案的开头已经不是这一批
+        STATE["plan"] = None
     _prewarm_thumbs()
-    return {"seed": p["hook_seed"], "highlights": a["highlights"]}
+    return {"ok": True, "seed": p.get("hook_seed"), "highlights": hl,
+            "remaining": max(0, pool - len(hl)), "shown_total": len(p["hook_shown"])}
 
 
 def _restore_last_project():

@@ -1,0 +1,67 @@
+{
+  "metrics": {
+    "highlights": 24,
+    "gt": 20,
+    "recall": 1.0,
+    "type_acc": 1.0,
+    "aligned": 1.0,
+    "precision": 0.833,
+    "median_rank": 13,
+    "missed": []
+  },
+  "checks": [
+    {
+      "name": "集末 3 秒短促高光能进候选",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "无台词打斗能进候选",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "揭身份能进候选",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "整体召回 ≥ 80%",
+      "ok": true,
+      "detail": "1.0"
+    },
+    {
+      "name": "类型标注准确率 ≥ 70%",
+      "ok": true,
+      "detail": "1.0"
+    },
+    {
+      "name": "起点对齐 ≥ 80%（第一帧就是那一下）",
+      "ok": true,
+      "detail": "1.0"
+    },
+    {
+      "name": "候选里凑数片段不超过 25%",
+      "ok": true,
+      "detail": "0.833"
+    },
+    {
+      "name": "候选里不再清一色动作冲突",
+      "ok": true,
+      "detail": "['action', 'dialog', 'reveal', 'tension']"
+    },
+    {
+      "name": "诊断耗时 < 400ms",
+      "ok": true,
+      "detail": "12ms"
+    },
+    {
+      "name": "两次识别结果一致",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "total": 10,
+  "failed": 0,
+  "time": "2026-11-16 15:30:07"
+}
