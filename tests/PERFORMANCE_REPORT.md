@@ -241,3 +241,104 @@ runtime\python.exe tests\prof_analyze.py --before   :: 需在旧版本上跑
 runtime\python.exe tests\prof_analyze.py
 runtime\python.exe tests\test_analyze_equiv.py
 ```
+
+---
+
+## 十、视频管线优化（第四轮：流式解码 + 画质自适应 + 容错）
+
+### 瓶颈定位
+
+用 `tests/prof_video.py` 造了一份 8 集 × 3 分钟 / 720×1280 / 带声音的合成素材
+（TEMP 缓存，不依赖用户原片），在独立子进程里测每阶段耗时与 **PeakWorkingSetSize**：
+
+| 阶段 | 优化前 | 说明 |
+|---|---|---|
+| 动作扫描（8 集 / 24 分钟） | 10.57 s / **334.6 MB** | 内存随片长线性增长 |
+| 剧情分析 | 0.061 s / 24.9 MB | 上一轮已优化，保持 |
+| 渲染 120 秒成片（2 段） | 10.37 s / 33.6 MB | 编码为主 |
+
+334 MB 的来源很明确：`_scan_signals` 用 `communicate()` 把整集 PCM 收进内存，
+再 `reshape → astype(float32) → abs` 复制三份。3 分钟 48k 单声道是 17 MB 原始字节，
+浮点副本 35 MB、绝对值再 35 MB，4 路并发 ≈ 350 MB。解码本身不是瓶颈，
+**内存和 GC 压力才是**。
+
+### 关键改动
+
+| 文件 / 函数 | 改动 | 收益 |
+|---|---|---|
+| `vision._scan_signals` | stdout PCM 改为 256 KB 分块流式读取；stderr 独立线程逐行解析；看门狗按片长杀进程 | 单路常驻 <1 MB，整机峰值 **−83.5%**；坏文件不再挂死 |
+| `vision._pcm_chunk_peaks` | 按 1024 样本块求峰值，int32 防 `-32768` 溢出；不足一块的尾巴留在 carry | 与整段读结果逐值一致（测试 D） |
+| `vision._audio_spikes` | 滚动中位数改为连续内存排序（`sliding_window_view.copy()` + `np.sort`） | 8400 窗 9.5 ms → **3.1 ms（3.1×）**，结果逐条一致 |
+| `vision._move_threshold` | 动作阈值按本集 pblack 的 p90 自适应（`min(88, max(45, p90−15))`），`_run_dict` 按同一阈值归一 | 干净片更敏感、噪声片不误报；三档画质强度差 ≤0.3 |
+| `vision._merge` | 无声音、持续 <0.35 s 的画面突变（闪白 / 闪电）不计为动作 | 减少假高光，真动作（≥3 帧或有声）保留 |
+| `vision.scan_project` | 并发数按核数收敛（≤4），每路 `-threads`/`-filter_threads` 限 3；单集异常只记录不拖垮整剧 | 4K/低配机器不再线程超订；一批里坏一集仍能出结果 |
+| `ffmpegx.iter_lines` | 增加超时看门狗 | 回退路径也不会永久阻塞 |
+| `project.scan` | 44 集 ffprobe 改 8 路并发；读不出的文件跳过并写入 `skipped`；全坏才报错 | 实测 44 集 **2316 ms → 635 ms（3.6×）** |
+| `render` | 每路 x264 限 `RENDER_THREADS`（≤8），裁剪/尾帧/包装统一 | 2 路并发不再互相抢 16 个核；120 s 成片 10.37 → 10.26 s |
+| `analyze.find_visual_highlights` | 视觉候选门槛按本剧事件分 p60 自适应，低音量片源不再一个画面钩子都出不来 | 召回提升，正常片源门槛不变 |
+| `multimodal._audio_envelope` | 8k PCM 也改流式，256 KB 块算 RMS/峰值 | 3 路并发少占 ~36 MB |
+| `app._thumb_key` | 缩略图 key 加入源文件路径哈希 | 修掉「两部剧都有 01.mp4 时缩略图串剧」的错图问题 |
+
+### 指标（同一台 16 核机器，前后各跑一次 `prof_video`）
+
+| 指标 | 优化前 | 优化后 | 变化 |
+|---|---|---|---|
+| 扫描 24 分钟素材 · 峰值内存 | 334.6 MB | **55.1 MB** | **−83.5%** |
+| 扫描耗时 | 10.57 s | 10.37 s | −1.9%（解码受限，波动 ±5%） |
+| 扫描吞吐 | — | 24 分钟 / 10.4 s ≈ **139× 实时** | — |
+| 音频峰值检测（8400 窗） | 9.5 ms | **3.1 ms** | **−67%** |
+| 导入 44 集探测 | 2316 ms | **635 ms** | **3.6×** |
+| 渲染 120 s / 360×640 | 10.37 s / 33.6 MB | 10.26 s / 33.7 MB | 持平 |
+| 剧情分析 | 61 ms / 24.9 MB | 63 ms / 26.0 MB | 持平 |
+
+> 扫描耗时没有大幅下降是预期的：这一阶段 90% 的时间在 ffmpeg 解码 720p 全帧，
+> Python 侧原本只占很小一块；本轮的收益主要是**内存、稳定性、容错**，
+> 以及不再因为某一集坏掉而整批失败。
+
+### 识别质量与画质稳定性
+
+`tests/test_vision_robust.py`（32 项）用合成 pblack / dB 序列 + 真实短视频覆盖：
+
+- **三档画质**（静态基线 98 / 90 / 84）都能抓到同一段 0.6 s 动作，强度差 ≤0.3；
+  整集稳定噪声（p90≈88）不产生任何动作段。
+- **闪白/闪电**：2 帧无声音突变被过滤；同一段带声音冲击则保留并计入分值。
+- **低音量片源**：全程 −55 dB 的录音里，−22 dB、3 个窗的脆响仍能被定位（±0.1 s），
+  全程安静不误报。
+- **流式 PCM**：整段读 vs 任意字节切分（含奇数长度）块数、时间戳、dB 值完全一致。
+- **失败隔离**：3 集里 1 集抛错，另 2 集照常产出，失败集写进 `failed`。
+- **导入容错**：2 个正常文件 + 1 个假 mp4 → 导入 2 集、`skipped` 记录 1 个；全坏才报错。
+
+钩子层回归（`test_hook_recall` 10 项 / `test_hook_pool` 22 项 / `test_hooks_policy` 30 项）
+指标不变：20 集标注集召回 100%、类型标注 100%、起点对齐 100%。
+
+### 回归验证步骤
+
+```bat
+:: 1. 基线 / 优化后性能（各约 20 秒，写 tests/results/video_perf_*.json）
+runtime\python.exe tests\prof_video.py before
+runtime\python.exe tests\prof_video.py after
+runtime\python.exe tests\prof_video.py compare
+
+:: 2. 信号层与容错
+runtime\python.exe tests\test_vision_robust.py      :: 32 项
+runtime\python.exe tests\test_multimodal.py         :: 35 项
+
+:: 3. 钩子与方案
+runtime\python.exe tests\test_hook_recall.py        :: 10 项
+runtime\python.exe tests\test_hook_pool.py          :: 22 项
+runtime\python.exe tests\test_hooks_policy.py       :: 30 项
+
+:: 4. 全链路
+runtime\python.exe tests\test_pipeline.py           :: 110 项
+runtime\python.exe tests\bench.py --tag v2 --repeat 1
+```
+
+判定标准：`prof_video compare` 中 `scan.peak_mb` 必须显著低于基线；
+`test_vision_robust` / `test_pipeline` / 钩子三套 0 失败；
+`bench` 每个用例 `stable=true`（同一输入多次结果指纹一致）。
+
+### 已知限制
+
+- 解码仍是扫描的主要成本；未启用硬件解码（不同机器驱动差异大，便携包不做默认）。
+- 自动混剪的深度识别仍是「画面 + 声音」两次解码，合并需要双管道，收益小于风险，暂缓。
+- 4K / 长剧（单集 >10 分钟）未在真实素材上压测；超时按 8× 片长、上限 900 s 保护。

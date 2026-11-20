@@ -1,0 +1,23 @@
+{
+  "scan": {
+    "secs": 10.57,
+    "per_ep": 1.321,
+    "eps": 8,
+    "events": 0,
+    "minutes": 24.0,
+    "peak_mb": 334.6
+  },
+  "analyze": {
+    "secs": 0.061,
+    "beats": 288,
+    "highlights": 15,
+    "peak_mb": 24.9
+  },
+  "render": {
+    "secs": 10.37,
+    "duration": 119.3,
+    "segments": 2,
+    "size_mb": 5.1,
+    "peak_mb": 33.6
+  }
+}

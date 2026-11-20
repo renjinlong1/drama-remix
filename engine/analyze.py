@@ -488,6 +488,12 @@ def find_visual_highlights(proj: dict, beats: list[dict], acts: list[dict] | Non
     """
     if not acts:
         return []
+    # 事件强度门槛按本剧分布自适应：低码率/小音量片源的事件分整体偏低，
+    # 固定 1.0 会让整部剧一个画面候选都出不来（漏掉真打斗）。
+    # 只在整体偏低时放宽，正常片源仍按 1.0 执行。
+    scores = [float(a.get("score", 0.0)) for a in acts
+              if float(a.get("score", 0.0)) > 0]
+    min_score = min(min_score, max(0.45, _pct(scores, 0.60, min_score) * 0.75))
     windows = _silence_windows(proj, beats)
     if not windows:
         return []

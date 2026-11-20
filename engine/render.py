@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parent.parent
 FPS = 30
 # 片段逐段编码是渲染最重的一段；限 2 路并发，别让同时启动的 ffmpeg 把内存顶高
 RENDER_CUT_WORKERS = 2
+# 每路 x264 默认会开到 CPU 线程数那么多，2 路并发时互相抢核反而更慢。
+# 按核数均分并封顶 6，让两路真正并行而不是上下文切换。
+RENDER_THREADS = max(2, min(8, (os.cpu_count() or 4) // max(1, RENDER_CUT_WORKERS)))
 
 
 def _even(n: float) -> int:
@@ -73,6 +76,7 @@ def _cut(seg: dict, proj: dict, work: Path, i: int, w: int, h: int, fit: str,
         "-vf", vf,
         "-af", af,
         "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-g", str(FPS * 2),
+        "-threads", str(RENDER_THREADS), "-filter_threads", str(RENDER_THREADS),
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(out),
@@ -86,6 +90,7 @@ def _card_video(png: str, out: Path, dur: float, w: int, h: int, crf: int, prese
             "-f", "lavfi", "-t", f"{dur:.2f}", "-i", "anullsrc=r=48000:cl=stereo",
             "-vf", f"scale={w}:{h},setsar=1,fps={FPS},format=yuv420p",
             "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-g", str(FPS * 2),
+            "-threads", str(RENDER_THREADS), "-filter_threads", str(RENDER_THREADS),
             "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
             "-shortest", str(out)]
@@ -119,6 +124,7 @@ def _end_frame_piece(src: str, out: Path, ef_dur: float, w: int, h: int, fit: st
         "-vf", _vfilter(w, h, fit),
         "-af", "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo",
         "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-g", str(FPS * 2),
+        "-threads", str(RENDER_THREADS), "-filter_threads", str(RENDER_THREADS),
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(out),
@@ -250,7 +256,8 @@ def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) 
     if layers:
         args += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a:0",
                  "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-                 "-g", str(FPS * 2), "-pix_fmt", "yuv420p",
+                 "-g", str(FPS * 2), "-threads", str(RENDER_THREADS),
+                 "-filter_threads", str(RENDER_THREADS), "-pix_fmt", "yuv420p",
                  "-profile:v", "high", "-level", "4.1"]
     else:
         # 没有角标 / 模板时画面不需要任何改动：直接拷贝已编码片段，只重编码音频

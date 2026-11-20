@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import ffmpegx, ocrsubs, subs
@@ -40,10 +42,29 @@ def scan(folder: str | Path, name: str = "") -> dict:
     pairs = subs.pair_subtitles(videos, sub_files)
     pname = name or folder.name
 
+    # 探测并发做：每集一次 ffmpeg -i 约 60~120ms，44 集串行要 4 秒；
+    # 8 路并发后 ≈0.6 秒，且 probe 有按「路径+大小+mtime」的缓存。
+    def probe_one(v: Path):
+        try:
+            return v, ffmpegx.probe(v), ""
+        except Exception as e:      # noqa: BLE001 坏文件跳过，别让整次导入失败
+            return v, None, str(e)
+
+    workers = max(1, min(8, os.cpu_count() or 4))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        probed = list(pool.map(probe_one, videos))
+    skipped = [{"file": v.name, "error": err[:200]} for v, info, err in probed if info is None]
+    playable = [(v, info) for v, info, _err in probed if info is not None]
+    if not playable:
+        raise RuntimeError("这些视频都读不出来：" +
+                           " / ".join(x["file"] for x in skipped[:3]))
+    if skipped:
+        print(f"[scan] 跳过 {len(skipped)} 个无法读取的文件："
+              + " / ".join(x["file"] for x in skipped[:3]), flush=True)
+
     episodes: list[dict] = []
     offset = 0.0
-    for i, v in enumerate(videos):
-        info = ffmpegx.probe(v)
+    for i, (v, info) in enumerate(playable):
         sp = pairs.get(str(v))
         cues = subs.load_subtitle(sp) if sp else []
         src = "file" if sp else ""
@@ -90,6 +111,7 @@ def scan(folder: str | Path, name: str = "") -> dict:
         "sub_episodes": with_cues,
         "sub_total": len(sub_files),
         "ocr_eps": sum(1 for e in episodes if e["sub_source"] == "ocr"),
+        "skipped": skipped,
     }
     return proj
 

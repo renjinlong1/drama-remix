@@ -162,9 +162,18 @@ def iter_lines(args: list[str], stream: str = "stderr", timeout: int = 1800):
                              creationflags=CREATE_NO_WINDOW)
         pipe = p.stderr
     try:
+        # 看门狗：管道读阻塞时（解码器卡死 / 坏文件）也能按时收场，
+        # 不至于让一次导入永远挂在这一集上
+        timer = threading.Timer(timeout, lambda: p.poll() is None and p.kill())
+        timer.daemon = True
+        timer.start()
         for raw in pipe:
             yield raw.decode("utf-8", "replace").rstrip("\r\n")
     finally:
+        try:
+            timer.cancel()
+        except Exception:   # noqa: BLE001
+            pass
         try:
             pipe.close()
         except Exception:

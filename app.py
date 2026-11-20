@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import random
@@ -201,6 +202,9 @@ def scan(body: dict = Body(...)):
                 progress=lambda pct, msg: _job_emit(86 + pct * 0.08, msg))
             p["acts"] = v["events"]
             print(f"[acts] {len(v['events'])} 个动作点 / {v['eps']} 集", flush=True)
+            if v.get("failed"):
+                print(f"[acts] {len(v['failed'])} 集扫描失败，已跳过："
+                      + " / ".join(f"第{x['ep']}集" for x in v["failed"][:5]), flush=True)
         except Exception as e:  # noqa: BLE001
             p["acts"] = []
             print(f"[acts] 跳过：{e}", flush=True)
@@ -324,7 +328,8 @@ def scan_acts(body: dict = Body(default={})):
             STATE["plan"] = None
         out = _proj_payload(p, a)
         out["acts_info"] = {"events": len(v["events"]), "eps": v["eps"],
-                            "scanned": v["scanned"]}
+                            "scanned": v["scanned"],
+                            "failed": len(v.get("failed") or [])}
         return out
     _bg(work)
     return {"ok": True}
@@ -1140,7 +1145,11 @@ _THUMB_SEM = threading.Semaphore(6)
 
 def _thumb_key(ep: dict, t: float) -> Path:
     tt = max(0.0, min(float(ep["dur"]) - 0.1, float(t)))
-    return THUMBS / f"{Path(ep['file']).stem}_{int(tt * 2)}.jpg"
+    # 只按文件名会串图：两部剧都有 01.mp4 时，「01_42.jpg」会被上一部剧复用，
+    # 换剧后候选卡片显示的是别的剧的画面。路径哈希进 key，彻底分开。
+    h = hashlib.sha1(str(Path(ep.get("path") or ep.get("file") or "")).lower()
+                     .encode("utf-8")).hexdigest()[:8]
+    return THUMBS / f"{h}_{int(tt * 2)}.jpg"
 
 
 def _ensure_thumb(ep: dict, t: float) -> Path:
@@ -1152,9 +1161,9 @@ def _ensure_thumb(ep: dict, t: float) -> Path:
     with _THUMB_SEM:
         if not key.exists():          # 排队期间别人可能已经生成
             tt = max(0.0, min(float(ep["dur"]) - 0.1, float(t)))
-            ffmpegx.run(["-y", "-ss", f"{tt:.2f}", "-i", ep["path"], "-frames:v", "1",
-                         "-vf", "scale=180:-2", "-q:v", "5", str(key)],
-                        timeout=60, check=False)
+            ffmpegx.run(["-y", "-threads", "1", "-ss", f"{tt:.2f}", "-i", ep["path"],
+                         "-frames:v", "1", "-an", "-vf", "scale=180:-2", "-q:v", "5",
+                         str(key)], timeout=60, check=False)
             _thumb_new += 1
             if _thumb_new % 50 == 0:
                 _prune_thumbs()

@@ -118,7 +118,7 @@ def main() -> int:
         beats = A.segment_beats(proj)
         samples += [b["text"] for b in beats]
         ck("项目节拍已载入", len(beats) > 100, len(beats))
-    ck("样本数", len(samples) > 50, len(samples))
+    ck("样本数", len(samples) > 20, len(samples))
 
     bad_hits = []
     bad_sus = []

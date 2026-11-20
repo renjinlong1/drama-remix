@@ -207,7 +207,8 @@ def query_match(query: str, unit: dict) -> tuple[float, str]:
 def _visual_samples(video: str) -> list[list]:
     """[[t, 亮度, 色温, 色彩, 与上一帧差异], ...]，每 2 秒一行。"""
     raw = ffmpegx.run_out(
-        ["-i", video, "-an", "-vf", f"fps=1/{SAMPLE_STEP:g},scale={SAMPLE_W}:{SAMPLE_H}",
+        ["-threads", "2", "-i", video, "-an",
+         "-vf", f"fps=1/{SAMPLE_STEP:g},scale={SAMPLE_W}:{SAMPLE_H}",
          "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], timeout=900)
     if np is None or not raw:
         return []
@@ -229,25 +230,57 @@ def _visual_samples(video: str) -> list[list]:
 
 
 def _audio_envelope(video: str, has_audio: bool) -> list[list]:
-    """[[t, rms_db, peak_db], ...]，0.5 秒一窗。"""
+    """[[t, rms_db, peak_db], ...]，0.5 秒一窗。
+
+    边解边算：以前 run_out 会把整集 8k PCM 读进内存再 reshape 成 float32，
+    3 分钟一集约 12MB/路、3 路并发 36MB；现在只保留一个 256KB 读块。
+    """
     if not has_audio:
         return []
-    raw = ffmpegx.run_out(
-        ["-i", video, "-vn", "-ac", "1", "-ar", str(AUD_SR),
-         "-acodec", "pcm_s16le", "-f", "s16le", "-"], timeout=900)
-    if np is None or len(raw) < 4:
-        return []
-    a = np.frombuffer(raw[: len(raw) // 2 * 2], dtype="<i2")
+    import subprocess
+
+    cmd = [ffmpegx.ffmpeg(), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
+           "-threads", "2", "-i", video, "-vn", "-ac", "1", "-ar", str(AUD_SR),
+           "-acodec", "pcm_s16le", "-f", "s16le", "-"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                         bufsize=0, creationflags=ffmpegx.CREATE_NO_WINDOW)
     win = int(AUD_SR * AUD_STEP)
-    n = len(a) // win
-    if not n:
-        return []
-    blocks = a[: n * win].reshape(n, win).astype(np.float32) / 32768.0
-    rms = np.sqrt((blocks * blocks).mean(axis=1))
-    peak = np.abs(blocks).max(axis=1)
-    db = lambda x: 20.0 * np.log10(np.maximum(x, 1e-6))  # noqa: E731
-    return [[round(i * AUD_STEP, 2), round(float(db(rms[i])), 2),
-             round(float(db(peak[i])), 2)] for i in range(n)]
+    out: list[list] = []
+    carry = b""
+    idx = 0
+    try:
+        while True:
+            chunk = p.stdout.read(262144)
+            if not chunk:
+                break
+            if np is None:
+                continue
+            buf = carry + chunk
+            n = len(buf) // 2
+            a = np.frombuffer(buf[: n * 2], dtype="<i2")
+            nb = len(a) // win
+            if not nb:
+                carry = buf
+                continue
+            blocks = a[: nb * win].reshape(nb, win).astype(np.float32) / 32768.0
+            rms = np.sqrt((blocks * blocks).mean(axis=1))
+            peak = np.abs(blocks).max(axis=1)
+            for i in range(nb):
+                out.append([round((idx + i) * AUD_STEP, 2),
+                            round(float(20 * math.log10(max(float(rms[i]), 1e-6))), 2),
+                            round(float(20 * math.log10(max(float(peak[i]), 1e-6))), 2)])
+            idx += nb
+            carry = buf[nb * win * 2:]
+    finally:
+        try:
+            p.stdout.close()
+        except Exception:   # noqa: BLE001
+            pass
+        try:
+            p.wait(timeout=30)
+        except Exception:   # noqa: BLE001
+            p.kill()
+    return out
 
 
 def scan_episode(ep: dict) -> dict:
