@@ -181,22 +181,9 @@ def _pcm_series(pcm: bytes, sr: int = AUD_SR) -> list[tuple[float, float]]:
     return out
 
 
-def _scan_signals(video: str, has_audio: bool = True,
-                  sr: int | None = None, threads: int = 2,
-                  timeout: float = 600.0) -> tuple[list, list]:
-    """一次解码同时拿画面帧差与声音峰值，边解边读不攒整段。
-
-    以前 `_diff_series` 和 `_audio_series` 各起一个 ffmpeg，同一集解码两遍；
-    合并成一条 `-filter_complex` 后只解码一次（81 秒正片 2166ms → 710ms）。
-    现在 stdout 的 PCM 也改成流式：不再 communicate() 攒完整段再算，
-    峰值内存从「片长×8 字节」降到「一个读块」。
-    """
-    if sr is None:
-        try:
-            sr = int(ffmpegx.probe(video).get("sample_rate") or 0)
-        except Exception:       # noqa: BLE001
-            sr = 0
-    sr = sr or AUD_SR
+def _scan_cmd(video: str, has_audio: bool, threads: int,
+              use_hw: bool) -> tuple[list[str], bool]:
+    """构造合并解码命令。`use_hw` 时由 ffmpegx 在 -i 前注入 -hwaccel。"""
     fc = (f"[0:v]fps={DIFF_FPS},scale={DIFF_W}:-2,format=gray,"
           f"tblend=all_mode=difference,"
           f"blackframe=amount=0:threshold={DIFF_THRESHOLD}[v]")
@@ -206,9 +193,15 @@ def _scan_signals(video: str, has_audio: bool = True,
         fc += ";[0:a]aformat=sample_fmts=s16:channel_layouts=mono[a]"
         maps += ["-map", "[a]", "-f", "s16le", "-"]
     threads = max(1, int(threads))
-    cmd = [ffmpegx.ffmpeg(), "-hide_banner", "-nostdin", "-nostats", "-v", "info",
-           "-threads", str(threads), "-filter_threads", str(threads),
-           "-i", str(video), "-filter_complex", fc, *maps]
+    base = ["-v", "info", "-threads", str(threads), "-filter_threads", str(threads),
+            "-i", str(video), "-filter_complex", fc, *maps]
+    injected, used = ffmpegx.hw_inject(base, allow_hw=use_hw)
+    return [ffmpegx.ffmpeg(), "-hide_banner", "-nostdin", "-nostats", *injected], used
+
+
+def _scan_once(cmd: list[str], has_audio: bool, sr: int,
+               timeout: float) -> tuple[list, list, int | None, list[str], bool, bool]:
+    """跑一次合并解码，边解边读不攒整段。返回 (画面, 声音, rc, 错误尾, 超时, 被杀)。"""
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          bufsize=0, creationflags=ffmpegx.CREATE_NO_WINDOW)
 
@@ -265,12 +258,52 @@ def _scan_signals(video: str, has_audio: bool = True,
                 pass
         if p.poll() is None:
             p.kill()
+            try:
+                p.wait(timeout=5)
+            except Exception:   # noqa: BLE001
+                pass
+    return series, audio, p.returncode, list(err_tail), timed_out, killed["hit"]
 
-    if timed_out or killed["hit"]:
+
+def _scan_signals(video: str, has_audio: bool = True,
+                  sr: int | None = None, threads: int = 2,
+                  timeout: float = 600.0) -> tuple[list, list]:
+    """一次解码同时拿画面帧差与声音峰值，边解边读不攒整段。
+
+    以前 `_diff_series` 和 `_audio_series` 各起一个 ffmpeg，同一集解码两遍；
+    合并成一条 `-filter_complex` 后只解码一次（81 秒正片 2166ms → 710ms）。
+    现在 stdout 的 PCM 也改成流式：不再 communicate() 攒完整段再算，
+    峰值内存从「片长×8 字节」降到「一个读块」。
+
+    硬件解码由 ffmpegx 自动注入；失败/超时/什么都没读到时，整条命令用软件
+    解码重跑一次，上层拿到的 series/audio 与纯软件路径逐条一致。
+    """
+    if sr is None:
+        try:
+            sr = int(ffmpegx.probe(video).get("sample_rate") or 0)
+        except Exception:       # noqa: BLE001
+            sr = 0
+    sr = sr or AUD_SR
+    threads = max(1, int(threads))
+    cmd, used = _scan_cmd(video, has_audio, threads, use_hw=True)
+    series, audio, rc, tail, timed_out, killed = _scan_once(cmd, has_audio, sr, timeout)
+
+    bad = bool(timed_out or killed or (rc not in (0, None))
+               or (not series and not audio))
+    if used and bad:
+        # 硬件这一路没跑通：记录一次回退，用软件整体重跑（上层无感知）
+        ffmpegx.hwaccel.report_failure(
+            "动作扫描 " + (" / ".join(tail[-2:]) or f"rc={rc}"))
+        ffmpegx.hwaccel.record_decode("software")
+        sw_cmd, _ = _scan_cmd(video, has_audio, threads, use_hw=False)
+        series, audio, rc, tail, timed_out, killed = _scan_once(sw_cmd, has_audio, sr, timeout)
+    else:
+        ffmpegx.hwaccel.record_decode("hardware" if used else "software")
+
+    if timed_out or killed:
         raise RuntimeError("动作扫描超时")
-    if not series and p.returncode != 0:
-        tail = [ln for ln in list(err_tail)[-3:] if ln.strip()]
-        raise RuntimeError("ffmpeg 解码失败：" + " / ".join(tail))
+    if not series and rc not in (0, None):
+        raise RuntimeError("ffmpeg 解码失败：" + " / ".join([x for x in tail[-3:] if x.strip()]))
     return series, audio
 
 

@@ -1,0 +1,88 @@
+{
+  "clip": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_perf\\ep.mp4",
+  "duration": 180.0,
+  "resolution": "720x1280",
+  "workers": 4,
+  "backends": {
+    "software": {
+      "scan_single": {
+        "secs": 3.61,
+        "diff": 1799,
+        "audio": 8438,
+        "rc": 0,
+        "timeout": false,
+        "ok": true
+      },
+      "scan_parallel_secs": 5.21,
+      "pure_decode": {
+        "secs": 0.84,
+        "rc": 0,
+        "ok": true
+      }
+    },
+    "cuda": {
+      "scan_single": {
+        "secs": 4.34,
+        "diff": 1799,
+        "audio": 8438,
+        "rc": 0,
+        "timeout": false,
+        "ok": true
+      },
+      "scan_parallel_secs": 14.63,
+      "pure_decode": {
+        "secs": 3.79,
+        "rc": 0,
+        "ok": true
+      }
+    },
+    "dxva2": {
+      "scan_single": {
+        "secs": 10.97,
+        "diff": 1799,
+        "audio": 8438,
+        "rc": 0,
+        "timeout": false,
+        "ok": true
+      },
+      "scan_parallel_secs": 14.74,
+      "pure_decode": {
+        "secs": 4.25,
+        "rc": 0,
+        "ok": true
+      }
+    },
+    "qsv": {
+      "scan_single": {
+        "secs": 0.25,
+        "diff": 0,
+        "audio": 0,
+        "rc": -1313558101,
+        "timeout": false,
+        "ok": false
+      },
+      "scan_parallel_secs": 0.41,
+      "pure_decode": {
+        "secs": 0.28,
+        "rc": -1313558101,
+        "ok": false
+      }
+    },
+    "d3d11va": {
+      "scan_single": {
+        "secs": 11.32,
+        "diff": 1799,
+        "audio": 8438,
+        "rc": 0,
+        "timeout": false,
+        "ok": true
+      },
+      "scan_parallel_secs": 15.57,
+      "pure_decode": {
+        "secs": 4.4,
+        "rc": 0,
+        "ok": true
+      }
+    }
+  }
+}

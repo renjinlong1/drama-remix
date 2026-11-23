@@ -23,6 +23,7 @@
     <span class="chip ghost">未导入剧目</span>
   </div>
   <div class="topacts">
+    <span class="chip ghost hwchip" id="hwChip" title="点击查看硬件解码状态与切换模式">解码：检测中…</span>
     <button class="btn ghost" id="btnHelp">使用说明</button>
     <button class="btn" id="btnImportTop">导入剧集</button>
   </div>
@@ -438,6 +439,16 @@
       <button class="icobtn" id="diagClose">×</button>
     </div>
     <div class="mb" id="diagBody"></div>
+  </div>
+</div>
+
+<div class="modal" id="hwModal">
+  <div class="mbox">
+    <div class="mh">
+      <h3>硬件解码</h3>
+      <button class="icobtn" id="hwClose">×</button>
+    </div>
+    <div class="mb" id="hwBody"></div>
   </div>
 </div>
 

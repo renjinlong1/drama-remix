@@ -229,22 +229,11 @@ def _visual_samples(video: str) -> list[list]:
              round(float(diff[i]), 4)] for i in range(n)]
 
 
-def _audio_envelope(video: str, has_audio: bool) -> list[list]:
-    """[[t, rms_db, peak_db], ...]，0.5 秒一窗。
-
-    边解边算：以前 run_out 会把整集 8k PCM 读进内存再 reshape 成 float32，
-    3 分钟一集约 12MB/路、3 路并发 36MB；现在只保留一个 256KB 读块。
-    """
-    if not has_audio:
-        return []
+def _audio_envelope_once(cmd: list[str], win: int) -> tuple[list[list], int | None]:
     import subprocess
 
-    cmd = [ffmpegx.ffmpeg(), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
-           "-threads", "2", "-i", video, "-vn", "-ac", "1", "-ar", str(AUD_SR),
-           "-acodec", "pcm_s16le", "-f", "s16le", "-"]
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                          bufsize=0, creationflags=ffmpegx.CREATE_NO_WINDOW)
-    win = int(AUD_SR * AUD_STEP)
     out: list[list] = []
     carry = b""
     idx = 0
@@ -280,6 +269,33 @@ def _audio_envelope(video: str, has_audio: bool) -> list[list]:
             p.wait(timeout=30)
         except Exception:   # noqa: BLE001
             p.kill()
+            try:
+                p.wait(timeout=10)
+            except Exception:   # noqa: BLE001
+                pass
+    return out, p.returncode
+
+
+def _audio_envelope(video: str, has_audio: bool) -> list[list]:
+    """[[t, rms_db, peak_db], ...]，0.5 秒一窗。
+
+    边解边算：以前 run_out 会把整集 8k PCM 读进内存再 reshape 成 float32，
+    3 分钟一集约 12MB/路、3 路并发 36MB；现在只保留一个 256KB 读块。
+    硬件解码失败时整体用软件重跑，保证这一集不会静默少一路声音特征。
+    """
+    if not has_audio:
+        return []
+    base = ["-v", "error", "-threads", "2", "-i", video, "-vn", "-ac", "1",
+            "-ar", str(AUD_SR), "-acodec", "pcm_s16le", "-f", "s16le", "-"]
+    head = [ffmpegx.ffmpeg(), "-hide_banner", "-nostdin", "-nostats"]
+    win = int(AUD_SR * AUD_STEP)
+    injected, used = ffmpegx.hw_inject(base, allow_hw=True)
+    out, rc = _audio_envelope_once(head + injected, win)
+    if used and rc not in (0, None):
+        ffmpegx.hwaccel.report_failure(f"多模态声音采样 rc={rc}")
+        sw, _ = ffmpegx.hw_inject(base, allow_hw=False)
+        out, rc = _audio_envelope_once(head + sw, win)
+    ffmpegx.hwaccel.record_decode("hardware" if used and rc in (0, None) else "software")
     return out
 
 

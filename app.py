@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from engine import analyze as analyzemod
 from engine import autocut as autocutmod
-from engine import ffmpegx, multimodal as mmmod, naming, ocrsubs, pack
+from engine import ffmpegx, hwaccel, multimodal as mmmod, naming, ocrsubs, pack
 from engine import plan as planmod
 from engine import project as projmod
 from engine import render as rendermod
@@ -139,9 +139,35 @@ def status():
     except Exception as e:  # noqa: BLE001
         return {"ffmpeg": False, "error": str(e), "asset_ver": av}
     ok_ocr, ocr_msg = ocrsubs.available()
+    # 这里只读状态快照，不触发自检（自检含一次短基准，会拖慢首屏）。
+    # 服务启动时已在后台线程预热，前端拿 checking=true 会再拉一次 /api/hwaccel。
     return {"ffmpeg": True, "ffmpeg_path": path, "ffmpeg_version": ver,
-            "ocr": ok_ocr, "ocr_msg": ocr_msg,
+            "ocr": ok_ocr, "ocr_msg": ocr_msg, "hwaccel": hwaccel.status(),
             "projects": projmod.recent(8), "asset_ver": av}
+
+
+@app.get("/api/hwaccel")
+def hwaccel_state():
+    """硬件解码完整状态：能力、后端、自检明细、收益基准、运行期回退次数。"""
+    return hwaccel.detect()
+
+
+@app.post("/api/hwaccel/recheck")
+def hwaccel_recheck(body: dict = Body(default={})):
+    """重新自检。可传 sample=真实片源路径，让基准更贴近当前这部剧。"""
+    body = body if isinstance(body, dict) else {}
+    sample = body.get("sample") or None
+    return hwaccel.recheck(sample)
+
+
+@app.post("/api/hwaccel/mode")
+def hwaccel_mode(body: dict = Body(default={})):
+    """切换模式：auto(能力可用即启用) / smart(仅实测更快才启用) / off / 具体后端名。"""
+    body = body if isinstance(body, dict) else {}
+    mode = str(body.get("mode") or "auto").strip().lower()
+    if mode not in ("auto", "smart", "off") and mode not in hwaccel.compiled_methods():
+        raise HTTPException(400, f"不支持的解码模式：{mode}")
+    return hwaccel.set_mode(mode)
 
 
 def _check_scan_folder(folder: str) -> None:
@@ -1299,6 +1325,31 @@ def doctor():
     except Exception:  # noqa: BLE001
         pass
 
+    try:
+        hs = hwaccel.detect()
+        if hs["mode"] == "hardware":
+            bm = hs.get("benchmark") or {}
+            extra = (f" 短样片基准：硬件 {bm.get('hw_ms')}ms / 软件 {bm.get('sw_ms')}ms"
+                     if bm.get("valid") else "")
+            add(True, "硬件解码", f"已启用 {hs['backend_label']}（{hs['backend']}）。{extra}")
+        elif hs["capable"]:
+            add(True, "硬件解码", f"设备可用，已自动回退软件解码（不影响使用）：{hs['reason']}")
+        else:
+            add(True, "硬件解码", f"当前使用软件解码（不影响使用）：{hs['reason']}")
+        if hs["attempts"]:
+            detail = "；".join(f"{a['name']}：{'通过' if a['ok'] else a['reason'][:64]}"
+                               for a in hs["attempts"])
+            add(True, "后端自检", detail)
+        if hs["advisory"]:
+            add(True, "解码建议", hs["advisory"])
+        if hs["fallbacks"]:
+            add(True, "解码回退", f"运行期已自动回退 {hs['fallbacks']} 次；"
+                                  f"最近一次：{hs['last_error'] or '无错误信息'}")
+        if hs["degraded"]:
+            add(True, "解码降级", f"硬件连续失败，已整进程降级为软件解码：{hs['reason']}")
+    except Exception as e:  # noqa: BLE001  自检本身异常不能让 doctor 整个 500
+        add(True, "硬件解码", f"自检未完成，按软件解码运行：{e}")
+
     add(True, "运行环境", f"Python {sys.version.split()[0]} · {sys.platform}")
     return {"ok": all(x["ok"] for x in items), "items": items}
 
@@ -1613,6 +1664,8 @@ def _ours_on_port(port: int) -> bool:
 
 def main():
     _clean_stale_work()
+    # 硬件解码自检放后台：含一次短基准，别拖慢服务启动和首屏
+    threading.Thread(target=hwaccel.detect, daemon=True, name="hwaccel-probe").start()
     port = int(os.environ.get("DC_PORT", 8780))
     url = f"http://127.0.0.1:{port}"
     if _port_busy(port) and _ours_on_port(port):

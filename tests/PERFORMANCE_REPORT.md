@@ -339,6 +339,88 @@ runtime\python.exe tests\bench.py --tag v2 --repeat 1
 
 ### 已知限制
 
-- 解码仍是扫描的主要成本；未启用硬件解码（不同机器驱动差异大，便携包不做默认）。
+- 解码仍是扫描的主要成本；硬件解码已在第十一轮补齐自动识别 / 启用 / 回退，但实测本链路收益为负（见下节）。
 - 自动混剪的深度识别仍是「画面 + 声音」两次解码，合并需要双管道，收益小于风险，暂缓。
 - 4K / 长剧（单集 >10 分钟）未在真实素材上压测；超时按 8× 片长、上限 900 s 保护。
+
+---
+
+## 十一、硬件解码自动识别 / 启用 / 回退（第五轮）
+
+tag `v2026.11.23-hwaccel`。范围：新增 `engine/hwaccel.py`；`ffmpegx.run/run_out/iter_lines`
+统一注入 `-hwaccel` 并在失败时软件重跑；`vision._scan_signals` 与
+`multimodal._audio_envelope` 两条流式解码改为「硬件 → 失败整条软件重跑」；
+`render` 逐段裁切、缩略图、OCR、尾帧、concat 之外的所有解码命令经 `ffmpegx.run` 自动接入。
+
+### 判定链（为什么不能只看 `ffmpeg -hwaccels`）
+
+1. `ffmpeg -hwaccels` 只列**编译期**支持。本机返回 `cuda / dxva2 / qsv / d3d11va`。
+2. 按平台优先序逐个**真解一帧**，要求 `rc=0` + stderr 有硬件启用证据
+   （`Selecting decoder ... because of requested hwaccel method` / `Reinit context ... pix_fmt: cuda`），
+   并排除 `Device creation failed` / `No device available` 等设备错误。
+   ffmpeg 遇到不支持的编解码器会**静默回退软件且 rc=0**，只看返回码会误判成"启用成功"。
+3. 本机 `qsv` 在列表里但无 Intel oneVPL 设备，实跑 `rc=-1313558101` +
+   `Error creating a MFX session: -9`，被正确排除；`cuda / d3d11va / dxva2` 通过。
+4. 自检样片不依赖项目素材：首次用 ffmpeg 生成 1 秒 h264 到 `data/hwaccel_probe.mp4`，之后复用。
+5. **不设 `-hwaccel_output_format`**：解码帧下载回系统内存，
+   保证 `fps/scale/format=gray/tblend/blackframe`、`overlay`、`rawvideo` 等 CPU 滤镜链可用。
+
+### 实测（RTX 3060 / 便携包 ffmpeg 6.1.1 / 3 分钟 720x1280 有运动有声）
+
+`runtime\python.exe tests\prof_hwaccel.py` → `tests/results/hwaccel_perf.json`。
+单路 = `vision._scan_once` 完整扫描命令；4 路 = `scan_project` 的实际并发度；
+纯解码 = `-an -f null -`（无滤镜）。
+
+| 后端 | 单路扫描 | 4 路并发 | 纯解码 | 结果 |
+|---|---:|---:|---:|---|
+| software | 3.61 s | 5.21 s | 0.84 s | 基准 |
+| cuda | 4.34 s (×1.20) | 14.63 s (×2.81) | 3.79 s (×4.51) | 数据一致 |
+| d3d11va | 11.32 s (×3.14) | 15.57 s (×2.99) | 4.40 s (×5.24) | 数据一致 |
+| dxva2 | 10.97 s (×3.04) | 14.74 s (×2.83) | 4.25 s (×5.06) | 数据一致 |
+| qsv | 0.25 s | 0.41 s | 0.28 s | **解码失败**，0 帧，数据无效 |
+
+结论：**本工具的链路上硬件解码全面更慢**。整条链路是 CPU 滤镜 + libx264 编码，
+`-hwaccel` 解出的帧必须回传系统内存，回传与设备初始化抵消了 GPU 解码收益；
+4 路并发还要争用解码会话。换 4K / 高码率片源、或换用支持全 GPU 滤镜链的 ffmpeg 构建，
+结论可能不同 —— 所以提供「重新自检」与 `smart` 模式，不在代码里写死机器结论。
+
+**默认 `auto` 仍严格按需求「设备可用即自动启用」**（本机 → CUDA），但状态反馈里
+如实给出短样片基准与建议；`smart` 只在实测更快时才启用，`off` 关闭，
+指定后端名强制启用。切换无需重启。
+
+### 结果一致性
+
+- 15 s 片：`_scan_signals` 的 pblack 149 条、PCM 峰值 704 条，硬件 / 软件**逐条相等**。
+- 3 分钟片：1799 条画面 + 8438 条声音，数量与内容一致。
+- `vision.scan_episode` 的 events / motion / spikes、`multimodal.scan_episode` 的
+  samples / audio / shots 全部相等；核心链路结果指纹不变。
+- `data/act/*.json` 结构零改动（模式与失败计数只存于 `hwaccel` 全局状态 + API）。
+
+### 异常处理与反馈
+
+| 情况 | 行为 | 用户可见 |
+|---|---|---|
+| ffmpeg 无硬件后端 / 设备不可用 | 软件解码 | 徽标灰色 + 原因（含每个后端的失败说明） |
+| 单条命令硬件失败 / 超时 | 自动软件重跑该命令 | 回退计数 +1、最近错误 |
+| 连续失败 ≥3 次 | 整进程降级软件 | 徽标「自动降级」+ 降级原因 |
+| 命令本身错误（两条都失败） | 按原语义抛错 | 不误计硬件故障 |
+| 换驱动 / 换片源 | 点「重新自检」 | 可传真实片源路径重跑基准 |
+
+接口：`GET /api/hwaccel`、`POST /api/hwaccel/recheck`、`POST /api/hwaccel/mode`；
+`/api/status` 带状态快照，`/api/doctor` 新增「硬件解码 / 后端自检 / 解码建议 / 解码回退」项。
+环境变量 `DC_HWACCEL=auto|smart|off|<后端名>`。
+
+### 回归验证步骤
+
+```bat
+runtime\python.exe tests\test_hwaccel.py          :: 55 项：探测/模式/降级/注入/回退/一致性/接口
+runtime\python.exe tests\prof_hwaccel.py          :: 可复现收益基准，写 tests/results/hwaccel_perf.json
+runtime\python.exe tests\test_vision_robust.py    :: 32 项
+runtime\python.exe tests\test_pipeline.py         :: 110 项，结果指纹不变
+runtime\python.exe tests\test_multimodal.py       :: 35 项
+runtime\python.exe tests\test_autocut.py          :: 43 项
+```
+
+判定标准：`test_hwaccel` 55 项 0 失败（含"硬件失败整体软件重跑"与"逐条一致"）；
+全量 13 个套件 435 项断言 0 失败；`prof_hwaccel` 中成功后端都产出 1799/8438 条数据，
+失败后端明确标 `ok=false`。本轮结果：13 套件全绿，435/435 通过。

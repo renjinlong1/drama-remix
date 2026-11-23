@@ -1,7 +1,7 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-16.1';
+window.__APP_BUILD__ = '2026-11-23.1';
 
 /* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
    以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
@@ -3142,6 +3142,117 @@ setInterval(async () => {
 }, 5 * 60 * 1000);
 $('#verReload').onclick = () => location.reload();
 
+/* ── 硬件解码状态反馈 ───────────────────────────────
+   顶部徽标只给结论；点开弹层给全部明细：设备能力、每个后端的自检结果、
+   短样片收益基准、运行期硬件/软件次数与自动回退、最近错误，并可一键
+   在 auto / smart / off / 指定后端之间切换。 */
+function renderHwChip(hw) {
+  const el = $('#hwChip');
+  if (!el || !hw) return;
+  if (hw.checking) {
+    el.className = 'chip ghost hwchip';
+    el.textContent = '解码：检测中…';
+    el.title = '正在检测硬件解码能力';
+    return;
+  }
+  const tip = (hw.reason || '') + (hw.advisory ? '\n' + hw.advisory : '');
+  if (hw.degraded) {
+    el.className = 'chip warn hwchip';
+    el.textContent = '解码：软件（自动降级）';
+  } else if (hw.mode === 'hardware') {
+    el.className = 'chip ok hwchip';
+    el.textContent = '解码：硬件 · ' + String(hw.backend || '').toUpperCase();
+  } else if (hw.capable) {
+    el.className = 'chip warn hwchip';
+    el.textContent = '解码：软件（设备可用·已回退）';
+  } else {
+    el.className = 'chip ghost hwchip';
+    el.textContent = '解码：软件';
+  }
+  el.title = tip + '\n点击查看详情与切换模式';
+}
+
+function hwRow(ok, nm, ms) {
+  return '<div class="it ' + (ok ? 'ok' : 'no') + '"><span class="mk">' +
+    (ok ? '✓' : '✗') + '</span><span class="nm">' + esc(nm) +
+    '</span><span class="ms">' + esc(ms) + '</span></div>';
+}
+
+function renderHwBody(d) {
+  const body = $('#hwBody');
+  const rows = [];
+  rows.push(hwRow(d.mode === 'hardware', '当前模式',
+    d.mode === 'hardware'
+      ? ('硬件解码 · ' + (d.backend_label || d.backend || '') + '（' + (d.backend || '') + '）')
+      : '软件解码' + (d.degraded ? '（连续失败后自动降级）' : '')));
+  rows.push(hwRow(d.capable, '设备能力',
+    d.capable ? (d.backend_label || '硬件设备可用') : (d.reason || '未检测到可用硬件解码设备')));
+  rows.push(hwRow(d.compiled && d.compiled.length > 0, '编译支持',
+    (d.compiled || []).join(' / ') || '当前 ffmpeg 未编译硬件加速后端'));
+  (d.attempts || []).forEach((a) => rows.push(hwRow(a.ok, '自检 ' + a.name,
+    (a.ok ? '通过（' + a.ms + 'ms）：' : '未通过：') + a.reason)));
+  const bm = d.benchmark || {};
+  if (bm.valid) {
+    rows.push(hwRow(bm.faster, '短样片基准',
+      '硬件 ' + bm.hw_ms + 'ms / 软件 ' + bm.sw_ms + 'ms（比值 ' + bm.ratio + '）'));
+  }
+  rows.push(hwRow(true, '运行统计',
+    '硬件解码 ' + ((d.decodes || {}).hardware || 0) + ' 次 · 软件 ' +
+    ((d.decodes || {}).software || 0) + ' 次 · 自动回退 ' + (d.fallbacks || 0) + ' 次'));
+  if (d.fallbacks) rows.push(hwRow(false, '最近回退', d.last_error || '无错误信息'));
+
+  const modes = [['auto', '自动启用'], ['smart', '智能（更快才用）'], ['off', '关闭']];
+  (d.compiled || []).forEach((n) => modes.push([n, '强制 ' + n]));
+  const cur = d.override || 'auto';
+  const btns = modes.map(([m, label]) =>
+    '<button class="btn sm ghost hwmode' + (m === cur ? ' cur' : '') +
+    '" data-mode="' + esc(m) + '">' + esc(label) + '</button>').join('') +
+    '<button class="btn sm hwmode" data-mode="__recheck">重新自检</button>';
+
+  body.innerHTML = '<div class="dg">' + rows.join('') +
+    '<div class="sum">' + esc(d.reason || '') + '</div>' +
+    (d.advisory ? '<div class="sum">' + esc(d.advisory) + '</div>' : '') +
+    '<div class="hwmodes"><span>模式：</span>' + btns + '</div></div>';
+
+  $$('#hwBody .hwmode').forEach((b) => {
+    b.onclick = async () => {
+      const m = b.dataset.mode;
+      try {
+        b.disabled = true;
+        const r = m === '__recheck'
+          ? await api('/api/hwaccel/recheck', {})
+          : await api('/api/hwaccel/mode', { mode: m });
+        renderHwChip(r);
+        renderHwBody(r);
+        toast(m === '__recheck' ? '硬件解码自检完成' : ('解码模式已切换：' + m));
+      } catch (e) {
+        toast('操作失败：' + e.message, true);
+        b.disabled = false;
+      }
+    };
+  });
+}
+
+async function openHwModal() {
+  $('#hwModal').classList.add('on');
+  $('#hwBody').innerHTML = '<div class="dg"><div class="it ok"><span class="mk">…</span>' +
+    '<span class="ms">正在读取硬件解码状态……</span></div></div>';
+  try {
+    const d = await api('/api/hwaccel', undefined, 'GET');
+    renderHwChip(d);
+    renderHwBody(d);
+  } catch (e) {
+    $('#hwBody').innerHTML = '<div class="dg"><div class="it no"><span class="mk">✗</span>' +
+      '<span class="ms">' + esc(e.message) + '</span></div></div>';
+  }
+}
+
+$('#hwChip').onclick = () => openHwModal();
+$('#hwClose').onclick = () => $('#hwModal').classList.remove('on');
+$('#hwModal').addEventListener('click', (e) => {
+  if (e.target.id === 'hwModal') $('#hwModal').classList.remove('on');
+});
+
 async function boot() {
   resize();
   try {
@@ -3149,6 +3260,12 @@ async function boot() {
     verSelfCheck(st.asset_ver);
     if (!st.ffmpeg) toast('ffmpeg 未就绪：' + (st.error || ''), true);
     renderRecents(st.projects || []);
+    renderHwChip(st.hwaccel);
+    if (st.hwaccel && st.hwaccel.checking) {
+      setTimeout(async () => {
+        try { renderHwChip(await api('/api/hwaccel', undefined, 'GET')); } catch (e) { /* 掉线时忽略 */ }
+      }, 1500);
+    }
     const s = await api('/api/state', undefined, 'GET');
     if (s && s.ready) applyProject(s);
   } catch (e) { /* 首屏无状态是正常的 */ }

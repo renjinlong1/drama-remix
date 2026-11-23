@@ -33,7 +33,9 @@ button,input,select,textarea{font:inherit;color:inherit}
 .chip.ghost{background:transparent;color:var(--dim)}
 .chip.ok{color:var(--ok);border-color:#1e4d3c;background:#10241d}
 .chip.warn{color:#ffb05c;border-color:#4a3620;background:#241a10}
-.topacts{display:flex;gap:8px}
+.topacts{display:flex;gap:8px;align-items:center}
+.hwchip{cursor:pointer;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis}
+.hwchip:hover{filter:brightness(1.3)}
 
 /* ── 布局 ── */
 .grid{display:grid;grid-template-columns:300px minmax(0,1fr) 356px;gap:12px;
@@ -357,6 +359,10 @@ select.input{cursor:pointer}
 .dg .ms{flex:1;min-width:0;word-break:break-all;font-size:12px;line-height:1.6}
 .dg .sum{margin-top:4px;padding-top:10px;border-top:1px solid var(--line);font-size:12px}
 .dg .sum b{color:#ffb8ae}
+.hwmodes{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;
+  padding-top:10px;border-top:1px solid var(--line)}
+.hwmodes>span{font-size:12px;color:var(--dim);margin-right:2px}
+.hwmodes .btn.sm.cur{border-color:var(--brand);color:var(--brand)}
 
 /* ── 文件夹浏览器 ── */
 .dirbox{width:min(560px,92vw)}
