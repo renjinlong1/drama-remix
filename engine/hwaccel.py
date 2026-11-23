@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -61,9 +62,12 @@ _BACKEND_LABEL = {
     "vulkan": "Vulkan Video",
 }
 
-# 硬件确实被启用的证据（任一命中即可）
+# 硬件确实被启用的证据（任一命中即可）。
+# 注意：**不能**把 `Selecting decoder 'xxx' because of requested hwaccel method`
+# 当作证据 —— 它只说明"请求了 hwaccel"，解码器仍可能是软件名。实测 mpeg4 片
+# `-hwaccel cuda` 会打印 `Selecting decoder 'mpeg4' ...` 且 rc=0，实际完全软件
+# 解码。必须看到硬件帧格式（pix_fmt: cuda / Format cuda chosen）才算真启用。
 _OK_EVIDENCE = (
-    re.compile(r"Selecting decoder .* because of requested hwaccel method\s+(\S+)", re.I),
     re.compile(r"Reinit context to .*pix_fmt:\s*(cuda|d3d11|dxva2_vld|qsv|vaapi|videotoolbox|vdpau|vulkan)", re.I),
     re.compile(r"Format\s+(cuda|d3d11|dxva2_vld|qsv|vaapi|videotoolbox|vdpau|vulkan)\s+chosen", re.I),
 )
@@ -82,7 +86,10 @@ _FAIL_PATTERNS = (
     "decoder setup failed", "invalid device",
 )
 
+# 两把锁：_LOCK 只保护状态字段的短读写（status/prefix 永不等待长任务）；
+# _DETECT_LOCK 串行化耗时的自检/基准，避免多个线程同时起一堆 ffmpeg。
 _LOCK = threading.RLock()
+_DETECT_LOCK = threading.Lock()
 _STATE: dict = {
     "checked": False,
     "mode": "software",
@@ -141,46 +148,108 @@ def compiled_methods() -> list[str]:
         return []
 
 
-def _ensure_sample() -> str:
-    """造一张 1 秒 h264 自检片。
+def _sample_ok(path: Path) -> bool:
+    """样片必须真的能解出一帧。
 
-    不依赖项目里有没有剧、也不依赖发布包是否带 tests/fixtures —— 便携包
-    解出来就能自检。生成一次后复用；文件坏了自动重造。
+    以前只看文件大小，截断/写坏的片（可能仍 >2KB）会被一直复用，
+    结果是所有后端自检全失败、整机被误判成"不支持硬件解码"。
     """
-    if _SAMPLE_OVERRIDE and Path(_SAMPLE_OVERRIDE).exists():
-        return _SAMPLE_OVERRIDE
     try:
-        if PROBE_SAMPLE.exists() and PROBE_SAMPLE.stat().st_size > 2048:
-            return str(PROBE_SAMPLE)
+        if not path.exists() or path.stat().st_size <= 2048:
+            return False
+        p = subprocess.run([_ff(), "-hide_banner", "-nostdin", "-nostats",
+                            "-v", "error", "-i", str(path),
+                            "-frames:v", "1", "-f", "null", "-"],
+                           capture_output=True, timeout=15, creationflags=_flags())
+        return p.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _make_sample(dest: Path) -> bool:
+    """生成 1 秒 h264 自检片。只认 h264：mpeg4 会被硬件静默软解，验不了硬件。"""
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
-        pass
-    PROBE_SAMPLE.parent.mkdir(parents=True, exist_ok=True)
+        return False
     cmd = [_ff(), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y",
            "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-t", "1",
            "-an", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-           str(PROBE_SAMPLE)]
+           str(dest)]
     try:
         p = subprocess.run(cmd, capture_output=True, timeout=60, creationflags=_flags())
-        if p.returncode == 0 and PROBE_SAMPLE.exists():
-            return str(PROBE_SAMPLE)
+        if p.returncode == 0 and dest.exists() and dest.stat().st_size > 2048:
+            return True
     except Exception:  # noqa: BLE001
         pass
-    # libx264 被裁掉的极简包：退到 mpeg4，同样能验证 hwaccel 是否真的挂上
-    cmd[cmd.index("libx264")] = "mpeg4"
     try:
-        p = subprocess.run(cmd, capture_output=True, timeout=60, creationflags=_flags())
-        if p.returncode == 0 and PROBE_SAMPLE.exists():
-            return str(PROBE_SAMPLE)
-    except Exception:  # noqa: BLE001
+        dest.unlink(missing_ok=True)
+    except OSError:
         pass
+    return False
+
+
+def _ensure_sample() -> str:
+    """返回可用的自检片；优先复用，坏了重造；data 不可写就落临时目录。
+
+    不依赖项目里有没有剧、也不依赖发布包是否带 tests/fixtures —— 便携包
+    解出来就能自检。用户显式指定的片源只校验、不重造。
+    """
+    if _SAMPLE_OVERRIDE:
+        p = Path(_SAMPLE_OVERRIDE)
+        return str(p) if _sample_ok(p) else ""
+    if _sample_ok(PROBE_SAMPLE):
+        return str(PROBE_SAMPLE)
+    try:
+        PROBE_SAMPLE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    # data 目录可能只读（便携包放在 Program Files 等），退到系统临时目录
+    for dest in (PROBE_SAMPLE, Path(tempfile.gettempdir()) / "dc_hwaccel_probe.mp4"):
+        if _make_sample(dest):
+            return str(dest)
     return ""
+
+
+_MAX_SAMPLE_LEN = 4096
+
+
+def valid_sample(path) -> str:
+    """校验用户指定的自检片源，只接受本机存在的视频文件。
+
+    拒绝 UNC（\\\\server\\share）、URL/协议（http://、concat: 等）和以 - 开头的串，
+    避免 `/api/hwaccel/recheck` 变成任意文件探测或网络请求入口。
+    合法时返回规范化路径，非法返回 ""。
+    """
+    if not path:
+        return ""
+    s = str(path).strip().strip('"').strip("'")
+    if not s or len(s) > _MAX_SAMPLE_LEN or s.startswith("-"):
+        return ""
+    low = s.lower()
+    if low.startswith("\\\\") or low.startswith("//") or "://" in low:
+        return ""
+    p = Path(s)
+    try:
+        if not p.is_file():
+            return ""
+    except OSError:
+        return ""
+    from . import ffmpegx  # 延迟导入：ffmpegx 顶层会 import 本模块
+    if p.suffix.lower() not in ffmpegx.VIDEO_EXTS:
+        return ""
+    try:
+        return str(p.resolve())
+    except OSError:
+        return str(p)
 
 
 def set_sample(path: str | None) -> None:
     """让上层用真实片源重检（比合成片更有代表性）。"""
     global _SAMPLE_OVERRIDE
+    good = valid_sample(path)
     with _LOCK:
-        _SAMPLE_OVERRIDE = str(path) if path else None
+        _SAMPLE_OVERRIDE = good or None
         _STATE["checked"] = False
 
 
@@ -261,9 +330,19 @@ def benchmark(sample: str, backend: str, loops: int = 24,
         except Exception:  # noqa: BLE001
             return float("inf"), -1
 
-    sw = min(once([])[0] for _ in range(rounds))
-    hw = min(once(["-hwaccel", backend])[0] for _ in range(rounds))
-    if sw <= 0 or hw == float("inf"):
+    def best(pre: list[str]) -> float:
+        # 只统计成功轮次：命令失败时耗时再短也不能算"更快"，
+        # 否则一次秒退的坏后端会被判成加速几十倍。
+        vals = []
+        for _ in range(rounds):
+            secs, rc = once(pre)
+            if rc == 0 and secs > 0:
+                vals.append(secs)
+        return min(vals) if vals else float("inf")
+
+    sw = best([])
+    hw = best(["-hwaccel", backend])
+    if sw == float("inf") or hw == float("inf"):
         return {"hw_ms": 0, "sw_ms": 0, "ratio": 0.0, "faster": False,
                 "valid": False, "loops": loops}
     ratio = hw / sw
@@ -272,106 +351,168 @@ def benchmark(sample: str, backend: str, loops: int = 24,
             "valid": True, "loops": loops}
 
 
-def detect(force: bool = False, sample: str | None = None) -> dict:
+def detect(force: bool = False, sample: str | None = None,
+           wait: bool | None = None) -> dict:
     """检测环境并选定解码后端。进程内缓存，force 可强制重检。
+
+    并发语义：
+      - `status()` / `prefix()` 永远只读快照，不会被自检卡住；
+      - 普通调用拿不到自检锁就返回当前快照（checking=true），不阻塞；
+      - set_mode / recheck 传 force=True 并等待，保证拿到最终结果。
 
     模式（DC_HWACCEL 环境变量或 /api/hwaccel/mode）：
       auto    默认。设备可用即自动启用硬件解码（严格按"支持时启用"），
-              但会跑一次收益基准，把实测加速比与建议写进状态反馈。
+              同时跑一次收益基准，把实测加速比与建议写进状态反馈。
       smart   设备可用且实测更快才启用；否则自动回退软件并说明原因。
       off     关闭硬件解码。
       具体名   如 cuda / d3d11va，强制启用该后端（跳过收益校验）。
     """
-    global _ENV_MODE, _SAMPLE_OVERRIDE
+    global _SAMPLE_OVERRIDE
+    if sample is not None:
+        good = valid_sample(sample)
+        if not good:
+            return status()          # 非法片源不改状态；API 层会先返回 400
+        with _LOCK:
+            _SAMPLE_OVERRIDE = good
+        force = True
     with _LOCK:
-        if _STATE["checked"] and not force and sample is None:
+        if _STATE["checked"] and not force:
             return status()
-        if sample:
-            _SAMPLE_OVERRIDE = str(sample)
-        override = _STATE.get("override") or _ENV_MODE or "auto"
-        compiled = compiled_methods()
-        smp = _ensure_sample()
-        t_start = time.time()
-
-        st = _STATE
-        st.update({"checked": True, "compiled": compiled, "checked_at": int(time.time()),
-                   "sample": smp, "attempts": [], "candidates": [],
-                   "mode": "software", "backend": None, "capable": False,
-                   "benchmark": {}, "advisory": "", "degraded": False,
-                   "failures": 0, "fallbacks": 0, "last_error": "",
-                   "override": override if override != "auto" else ""})
-        try:
-            # -version 写 stdout（ffmpegx.version 走 stderr，会拿到空串），这里直读
-            p = subprocess.run([_ff(), "-hide_banner", "-version"],
-                               capture_output=True, timeout=20, creationflags=_flags())
-            lines = (p.stdout or b"").decode("utf-8", "replace").splitlines()
-            st["ffmpeg_version"] = lines[0][:120] if lines else ""
-        except Exception:  # noqa: BLE001
-            st["ffmpeg_version"] = ""
-
-        if override == "off":
-            st["reason"] = "已关闭硬件解码（DC_HWACCEL=off 或手动关闭），使用软件解码"
-            return status()
-        if not smp:
-            st["reason"] = "无法生成自检样片，自动使用软件解码"
-            return status()
-        if not compiled:
-            st["reason"] = "当前 ffmpeg 编译时未包含任何硬件加速后端，自动使用软件解码"
-            return status()
-
-        forced = False
-        if override in ("auto", "smart"):
-            cands = _candidate_order(compiled)
-            st["reason"] = "自动检测中"
-        else:
-            if override not in compiled:
-                st["reason"] = (f"指定的后端 {override} 不在 ffmpeg 支持列表 "
-                                f"({', '.join(compiled)}) 中，自动回退软件解码")
-                return status()
-            cands = [override]
-            forced = True
-        st["candidates"] = list(cands)
-
-        chosen = None
-        for name in cands:
-            if time.time() - t_start > DETECT_BUDGET:
-                st["attempts"].append({"name": name, "ok": False,
-                                       "reason": "超过自检总预算，停止尝试", "ms": 0})
-                break
-            ok, why, ms = _verify(name, smp)
-            st["attempts"].append({"name": name, "ok": ok, "reason": why, "ms": ms})
-            if ok:
-                chosen = name
-                break
-        if not chosen:
-            st["capable"] = False
-            brief = "; ".join(f"{a['name']}={a['reason']}" for a in st["attempts"][:3])
-            st["reason"] = "未找到可用的硬件解码后端，自动回退软件解码。" + _short(brief, 260)
-            return status()
-
-        st["capable"] = True
-        if not forced:
-            st["benchmark"] = benchmark(smp, chosen)
-            bm = st["benchmark"]
-            if bm.get("valid"):
-                pct = abs(round((1 - bm["ratio"]) * 100))
-                if bm["faster"]:
-                    st["advisory"] = f"本机实测硬件解码快 {pct}%，可放心使用"
-                else:
-                    st["advisory"] = (f"短样片基准：硬件 {bm['hw_ms']}ms / 软件 "
-                                      f"{bm['sw_ms']}ms（慢 {pct}%）。本工具以 CPU 滤镜为主，"
-                                      f"解码帧要回传内存，抵消了硬件收益")
-        if override == "smart" and st["benchmark"].get("valid") and not st["benchmark"].get("faster"):
-            st.update({"mode": "software", "backend": None,
-                       "reason": "硬件设备可用，但实测本工具链路上更慢，已自动回退软件解码"})
-            st["advisory"] += "；已按 smart 自动回退，如需强制启用可指定后端名"
-        else:
-            st.update({"mode": "hardware", "backend": chosen,
-                       "reason": f"已启用硬件解码：{_BACKEND_LABEL.get(chosen, chosen)} "
-                                 f"({chosen})；实解一帧验证通过"})
-            if st["benchmark"].get("valid") and not st["benchmark"]["faster"]:
-                st["advisory"] += "；追求速度可切 smart / off"
+        # 检测一开始就把 checked 置回 False：status() 显示 checking，
+        # prefix() 立即回到软件，避免半成品状态被拿去拼命令
+        _STATE["checked"] = False
+        _STATE["reason"] = "正在检测硬件解码能力…"
+    if wait is None:
+        wait = bool(force)
+    got = _DETECT_LOCK.acquire(timeout=(DETECT_BUDGET + 120) if wait else 0)
+    if not got:
+        # 已有线程在检测：直接返回快照，不把调用方堵在锁上
         return status()
+    try:
+        with _LOCK:
+            if _STATE["checked"] and not force:
+                return status()
+            _STATE["checked"] = False
+        return _detect_impl()
+    except Exception as e:  # noqa: BLE001
+        with _LOCK:
+            _STATE.update({"checked": True, "mode": "software", "backend": None,
+                           "capable": False,
+                           "reason": f"自检异常，已回退软件解码：{_short(e, 160)}"})
+        return status()
+    finally:
+        _DETECT_LOCK.release()
+
+
+def _detect_impl() -> dict:
+    """真正的耗时检测。调用方已持有 _DETECT_LOCK，但不持 _LOCK。"""
+    with _LOCK:
+        override = _STATE.get("override") or _ENV_MODE or "auto"
+
+    def snap(**kw) -> None:
+        with _LOCK:
+            _STATE.update(kw)
+
+    compiled = compiled_methods()
+    smp = _ensure_sample()
+    t_start = time.time()
+    snap(compiled=compiled, checked_at=int(time.time()), sample=smp,
+         attempts=[], candidates=[], mode="software", backend=None,
+         capable=False, benchmark={}, advisory="", degraded=False,
+         failures=0, fallbacks=0, last_error="",
+         override=override if override != "auto" else "")
+
+    ver = ""
+    try:
+        # -version 写 stdout（run_text 返回 stderr，会拿到空串），这里直读
+        p = subprocess.run([_ff(), "-hide_banner", "-version"],
+                           capture_output=True, timeout=20, creationflags=_flags())
+        lines = (p.stdout or b"").decode("utf-8", "replace").splitlines()
+        ver = lines[0][:120] if lines else ""
+    except Exception:  # noqa: BLE001
+        pass
+    snap(ffmpeg_version=ver)
+
+    if override == "off":
+        snap(reason="已关闭硬件解码（DC_HWACCEL=off 或手动关闭），使用软件解码")
+        return _done()
+    if not smp:
+        snap(reason=("指定的自检片源不可用（需要本机存在且能解码的视频文件），"
+                     "自动使用软件解码" if _SAMPLE_OVERRIDE else
+                     "无法生成自检样片（data 目录与临时目录都不可写），"
+                     "自动使用软件解码"))
+        return _done()
+    if not compiled:
+        snap(reason="当前 ffmpeg 编译时未包含任何硬件加速后端，自动使用软件解码")
+        return _done()
+
+    forced = False
+    if override in ("auto", "smart"):
+        cands = _candidate_order(compiled)
+        snap(reason="自动检测中")
+    else:
+        if override not in compiled:
+            snap(reason=(f"指定的后端 {override} 不在 ffmpeg 支持列表 "
+                         f"({', '.join(compiled)}) 中，自动回退软件解码"))
+            return _done()
+        cands = [override]
+        forced = True
+    snap(candidates=list(cands))
+
+    chosen = None
+    for name in cands:
+        if time.time() - t_start > DETECT_BUDGET:
+            with _LOCK:
+                _STATE["attempts"].append({"name": name, "ok": False,
+                                           "reason": "超过自检总预算，停止尝试", "ms": 0})
+            break
+        ok, why, ms = _verify(name, smp)
+        with _LOCK:
+            _STATE["attempts"].append({"name": name, "ok": ok,
+                                       "reason": why, "ms": ms})
+        if ok:
+            chosen = name
+            break
+    if not chosen:
+        with _LOCK:
+            attempts = list(_STATE["attempts"])
+        brief = "; ".join(f"{a['name']}={a['reason']}" for a in attempts[:3])
+        snap(capable=False,
+             reason="未找到可用的硬件解码后端，自动回退软件解码。" + _short(brief, 260))
+        return _done()
+
+    snap(capable=True)
+    bm: dict = {}
+    if not forced:
+        bm = benchmark(smp, chosen)
+        snap(benchmark=bm)
+        if bm.get("valid"):
+            pct = abs(round((1 - bm["ratio"]) * 100))
+            if bm["faster"]:
+                snap(advisory=f"本机实测硬件解码快 {pct}%，可放心使用")
+            else:
+                snap(advisory=(f"短样片基准：硬件 {bm['hw_ms']}ms / 软件 "
+                               f"{bm['sw_ms']}ms（慢 {pct}%）。本工具以 CPU 滤镜为主，"
+                               f"解码帧要回传内存，抵消了硬件收益"))
+    with _LOCK:
+        advisory = _STATE["advisory"]
+    if override == "smart" and bm.get("valid") and not bm.get("faster"):
+        snap(mode="software", backend=None,
+             reason="硬件设备可用，但实测本工具链路上更慢，已自动回退软件解码",
+             advisory=advisory + "；已按 smart 自动回退，如需强制启用可指定后端名")
+    else:
+        snap(mode="hardware", backend=chosen,
+             reason=f"已启用硬件解码：{_BACKEND_LABEL.get(chosen, chosen)} "
+                    f"({chosen})；实解一帧验证通过")
+        if bm.get("valid") and not bm["faster"]:
+            snap(advisory=advisory + "；追求速度可切 smart / off")
+    return _done()
+
+
+def _done() -> dict:
+    with _LOCK:
+        _STATE["checked"] = True
+    return status()
 
 
 def status() -> dict:
@@ -381,6 +522,7 @@ def status() -> dict:
         s["attempts"] = [dict(a) for a in _STATE["attempts"]]
         s["compiled"] = list(_STATE["compiled"])
         s["candidates"] = list(_STATE["candidates"])
+        s["benchmark"] = dict(_STATE["benchmark"])
         s["decodes"] = dict(_STATE["decodes"])
         s["backend_label"] = _BACKEND_LABEL.get(s["backend"] or "", s["backend"] or "")
         s["enabled"] = s["mode"] == "hardware"
@@ -389,15 +531,18 @@ def status() -> dict:
 
 
 def prefix() -> list[str]:
-    """给 ffmpeg 命令用的硬件解码参数；软件解码时返回 []。
+    """给 ffmpeg 命令用的硬件解码参数；软件解码 / 检测未完成时返回 []。
+
+    只读快照，绝不触发检测：否则每条 ffmpeg 命令都要等一次自检，
+    启动预热或驱动异常时整条流水线会被拖住。
 
     永远不带 `-hwaccel_output_format`：解码帧下载回系统内存，
     保证本项目所有 CPU 滤镜链可用（见模块头说明 3）。
     """
-    st = detect()
-    if st["mode"] != "hardware" or not st["backend"]:
-        return []
-    return ["-hwaccel", st["backend"]]
+    with _LOCK:
+        if not _STATE["checked"] or _STATE["mode"] != "hardware" or not _STATE["backend"]:
+            return []
+        return ["-hwaccel", _STATE["backend"]]
 
 
 def record_decode(mode: str) -> None:

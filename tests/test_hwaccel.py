@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -83,14 +86,20 @@ def test_modes() -> None:
 
     s = hwaccel.set_mode("__no_such_backend__")
     ck("非法后端回退软件", s["mode"] == "software")
-    ck("非法后端原因清晰", "不在 ffmpeg 支持列表" in s["reason"], s["reason"])
+    ck("非法后端原因清晰",
+       ("不在 ffmpeg 支持列表" in s["reason"]) or ("未包含任何硬件加速后端" in s["reason"]),
+       s["reason"])
 
     s = hwaccel.set_mode("smart")
     bm = s.get("benchmark") or {}
     if bm.get("valid"):
         expect = "hardware" if bm["faster"] else "software"
         ck("smart 按实测收益决策", s["mode"] == expect, bm)
-    ck("smart 仍记录设备能力", s["capable"] is True)
+    # 无独显 / 精简 ffmpeg 时 capable 必须是 False，不能硬性要求 True
+    ck("smart 结果自洽",
+       (s["mode"] == "hardware" and s["capable"]) or
+       (s["mode"] == "software" and ("软件" in s["reason"] or "关闭" in s["reason"])),
+       (s["mode"], s["capable"], s["reason"]))
     hwaccel.set_mode("auto")
 
 
@@ -264,13 +273,177 @@ def test_api() -> None:
     hwaccel.set_mode("auto")
 
 
+# ── I 假硬件识别（P0） ────────────────────────────────────────────────
+def test_no_false_hw() -> None:
+    """mpeg4 等编码会被 ffmpeg 静默软解，不能算硬件自检通过。"""
+    import subprocess
+    tmp = Path(tempfile.gettempdir()) / "dc_mpeg4_false_hw.mp4"
+    p = subprocess.run([ffmpegx.ffmpeg(), "-hide_banner", "-nostdin", "-y",
+                        "-v", "error", "-f", "lavfi",
+                        "-i", "testsrc2=size=320x180:rate=25", "-t", "1",
+                        "-an", "-c:v", "mpeg4", "-q:v", "5", str(tmp)],
+                       capture_output=True, timeout=60,
+                       creationflags=ffmpegx.CREATE_NO_WINDOW)
+    try:
+        ck("生成 mpeg4 测试片", p.returncode == 0 and tmp.exists(), p.returncode)
+        backend = hwaccel.status()["backend"] or "cuda"
+        ok, why, ms = hwaccel._verify(backend, str(tmp))
+        ck("静默软解不算硬件通过", not ok, why)
+        ck("未通过原因写明软解/失败", ("软件" in why) or ("失败" in why), why)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+# ── J 自检期间不阻塞（P0） ────────────────────────────────────────────
+def test_lock_nonblocking() -> None:
+    if not _hardware():
+        print("  SKIP 无硬件，跳过自检阻塞用例")
+        return
+    orig = hwaccel.benchmark
+    hwaccel.benchmark = lambda *a, **k: (time.sleep(1.2), {"valid": False})[1]
+    hwaccel._STATE["checked"] = False
+    th = threading.Thread(target=hwaccel.detect, kwargs={"force": True}, daemon=True)
+    th.start()
+    time.sleep(0.2)
+    t = time.time(); hwaccel.status(); ds = time.time() - t
+    t = time.time(); pre = hwaccel.prefix(); dp = time.time() - t
+    th.join(timeout=30)
+    hwaccel.benchmark = orig
+    ck("检测中 status 不阻塞", ds < 0.3, f"{ds:.2f}s")
+    ck("检测中 prefix 不阻塞且回软件", dp < 0.3 and pre == [], f"{dp:.2f}s {pre}")
+    ck("检测完成后恢复硬件", hwaccel.status()["mode"] == "hardware")
+
+
+# ── K 收益基准过滤失败轮次（P0） ──────────────────────────────────────
+def test_benchmark_rc() -> None:
+    orig = hwaccel.subprocess.run
+
+    class R:
+        def __init__(self, rc):
+            self.returncode = rc
+            self.stdout = b""
+            self.stderr = b""
+
+    hwaccel.subprocess.run = lambda cmd, **kw: R(1 if "-hwaccel" in cmd else 0)
+    try:
+        bm = hwaccel.benchmark("x.mp4", "cuda", loops=1, rounds=1)
+        ck("基准排除失败轮次", bm.get("valid") is False, bm)
+    finally:
+        hwaccel.subprocess.run = orig
+
+
+# ── L sample 白名单（P1） ────────────────────────────────────────────
+def test_sample_guard() -> None:
+    bad = [str(ROOT / "app.py"), "http://127.0.0.1:9/x.mp4",
+           r"\\server\share\x.mp4", "-i", "", str(ROOT / "no_such.mp4")]
+    for s in bad:
+        ck("拒绝非法 sample", hwaccel.valid_sample(s) == "", s[:40])
+    ck("接受真实视频 sample", hwaccel.valid_sample(VIDEO) != "", VIDEO)
+    from fastapi import HTTPException
+    for s in (str(ROOT / "app.py"), "http://127.0.0.1:9/x.mp4"):
+        raised = False
+        try:
+            APP.hwaccel_recheck({"sample": s})
+        except HTTPException as e:
+            raised = e.status_code == 400
+        ck("API 非法 sample 返回 400", raised, s[:40])
+    ok = APP.hwaccel_recheck({"sample": VIDEO})
+    ck("API 接受真实视频 sample",
+       ok.get("checked") is True and bool(ok.get("sample")), ok.get("sample"))
+    hwaccel._SAMPLE_OVERRIDE = None
+
+
+# ── M 坏样片自动重造（P1） ────────────────────────────────────────────
+def test_sample_repair() -> None:
+    bad = Path(tempfile.gettempdir()) / "dc_repair_probe.mp4"
+    bad.write_bytes(b"X" * 5000)
+    orig = hwaccel.PROBE_SAMPLE
+    hwaccel.PROBE_SAMPLE = bad
+    hwaccel._SAMPLE_OVERRIDE = None
+    try:
+        got = hwaccel._ensure_sample()
+        ck("坏样片被重造且可解码",
+           bool(got) and hwaccel._sample_ok(Path(got)), got)
+    finally:
+        hwaccel.PROBE_SAMPLE = orig
+        bad.unlink(missing_ok=True)
+
+
+# ── N 版本串（P1） ──────────────────────────────────────────────────
+def test_version() -> None:
+    ffmpegx._FFMPEG_VER = None
+    v = ffmpegx.version()
+    ck("ffmpeg 版本读到 stdout", "ffmpeg version" in v.lower(), v[:80])
+    st = APP.status()
+    ck("/api/status 版本不是 unknown",
+       "unknown" not in str(st.get("ffmpeg_version", "")).lower(),
+       st.get("ffmpeg_version"))
+
+
+# ── O 无 GPU / 精简 ffmpeg 可移植（P1） ──────────────────────────────
+def test_modes_portable() -> None:
+    orig = hwaccel.compiled_methods
+    hwaccel.compiled_methods = lambda: []
+    try:
+        s = hwaccel.set_mode("smart")
+        ck("无编译后端时明确回退",
+           s["mode"] == "software" and "未包含" in s["reason"], s["reason"])
+        ck("无编译后端时 capable=false", s["capable"] is False)
+        s = hwaccel.set_mode("__no_such_backend__")
+        ck("无编译后端时原因可读",
+           s["mode"] == "software" and
+           ("未包含" in s["reason"] or "不在 ffmpeg 支持列表" in s["reason"]),
+           s["reason"])
+    finally:
+        hwaccel.compiled_methods = orig
+    s = hwaccel.set_mode("auto")
+    ck("恢复自动模式", s["checked"] is True)
+
+
+# ── P iter_lines 溢出统计（P1） ──────────────────────────────────────
+def test_iter_overflow() -> None:
+    if not _hardware():
+        print("  SKIP 无硬件，跳过 iter_lines 溢出用例")
+        return
+    cap, once = ffmpegx.HW_LINE_RETRY_CAP, ffmpegx._iter_once
+
+    def fake(args, stream, timeout, holder):
+        for i in range(5):
+            yield f"line{i}"
+        holder["rc"] = 1
+
+    ffmpegx.HW_LINE_RETRY_CAP = 3
+    ffmpegx._iter_once = fake
+    try:
+        before = hwaccel.status()["decodes"]["software"]
+        bf = hwaccel.status()["fallbacks"]
+        lines = list(ffmpegx.iter_lines(["-i", VIDEO], allow_hw=True))
+        ck("溢出后输出不重复", lines == [f"line{i}" for i in range(5)], lines)
+        ck("溢出且失败记软件", hwaccel.status()["decodes"]["software"] == before + 1)
+        ck("溢出失败计入回退", hwaccel.status()["fallbacks"] == bf + 1)
+    finally:
+        ffmpegx.HW_LINE_RETRY_CAP = cap
+        ffmpegx._iter_once = once
+
+
+# ── Q 前端状态刷新（P1） ────────────────────────────────────────────
+def test_frontend_refresh() -> None:
+    js = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    ck("前端有自检轮询", "function pollHw" in js and "d.checking" in js)
+    ck("前端定时刷新徽标", "renderHwChip(st.hwaccel)" in js)
+    ck("前端切换按钮有处理中提示", "自检中…" in js and "切换中…" in js)
+
+
 def main() -> int:
     print("硬件解码测试 ·", VIDEO)
     if not FIX.exists():
         print("缺少测试片源，请先跑 gen_fixtures.py")
         return 2
     for fn in (test_detect, test_modes, test_failure, test_inject,
-               test_run_fallback, test_vision_fallback, test_equiv, test_api):
+               test_run_fallback, test_vision_fallback, test_equiv, test_api,
+               test_no_false_hw, test_lock_nonblocking, test_benchmark_rc,
+               test_sample_guard, test_sample_repair, test_version,
+               test_modes_portable, test_iter_overflow, test_frontend_refresh):
         print("─", fn.__name__)
         try:
             fn()

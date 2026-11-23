@@ -1,7 +1,7 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-23.1';
+window.__APP_BUILD__ = '2026-11-23.2';
 
 /* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
    以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
@@ -3137,15 +3137,35 @@ function verSelfCheck(serverVer) {
   // 命中浏览器缓存里的旧 JS，必须提示刷新，不能像以前那样直接跳过。
   if (!mine || serverVer !== mine) $('#verBanner').hidden = false;
 }
+/* 每 60 秒同步版本与解码状态：运行期连续失败会自动降级，只有轮询才能
+   让徽标及时反映（以前 5 分钟且只查 asset_ver，降级后一直显示硬件）。 */
 setInterval(async () => {
-  try { verSelfCheck((await api('/api/status', undefined, 'GET')).asset_ver); } catch (e) { /* 掉线时忽略 */ }
-}, 5 * 60 * 1000);
+  try {
+    const st = await api('/api/status', undefined, 'GET');
+    verSelfCheck(st.asset_ver);
+    renderHwChip(st.hwaccel);
+  } catch (e) { /* 掉线时忽略 */ }
+}, 60 * 1000);
 $('#verReload').onclick = () => location.reload();
 
 /* ── 硬件解码状态反馈 ───────────────────────────────
    顶部徽标只给结论；点开弹层给全部明细：设备能力、每个后端的自检结果、
    短样片收益基准、运行期硬件/软件次数与自动回退、最近错误，并可一键
    在 auto / smart / off / 指定后端之间切换。 */
+/* 自检没结束时轮询到出结果：慢机器（驱动初始化 / 收益基准）可能要几十秒，
+   不能只拉一次就永远停在"检测中…"。 */
+async function pollHw(times = 40) {
+  for (let i = 0; i < times; i++) {
+    try {
+      const d = await api('/api/hwaccel', undefined, 'GET');
+      renderHwChip(d);
+      if (!d.checking) return d;
+    } catch (e) { /* 掉线时下一轮再试 */ }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return null;
+}
+
 function renderHwChip(hw) {
   const el = $('#hwChip');
   if (!el || !hw) return;
@@ -3217,8 +3237,10 @@ function renderHwBody(d) {
   $$('#hwBody .hwmode').forEach((b) => {
     b.onclick = async () => {
       const m = b.dataset.mode;
+      const old = b.textContent;
       try {
         b.disabled = true;
+        b.textContent = m === '__recheck' ? '自检中…' : '切换中…';
         const r = m === '__recheck'
           ? await api('/api/hwaccel/recheck', {})
           : await api('/api/hwaccel/mode', { mode: m });
@@ -3227,6 +3249,7 @@ function renderHwBody(d) {
         toast(m === '__recheck' ? '硬件解码自检完成' : ('解码模式已切换：' + m));
       } catch (e) {
         toast('操作失败：' + e.message, true);
+        b.textContent = old;
         b.disabled = false;
       }
     };
@@ -3241,6 +3264,10 @@ async function openHwModal() {
     const d = await api('/api/hwaccel', undefined, 'GET');
     renderHwChip(d);
     renderHwBody(d);
+    if (d.checking) {
+      const done = await pollHw();
+      if (done) renderHwBody(done);
+    }
   } catch (e) {
     $('#hwBody').innerHTML = '<div class="dg"><div class="it no"><span class="mk">✗</span>' +
       '<span class="ms">' + esc(e.message) + '</span></div></div>';
@@ -3261,11 +3288,7 @@ async function boot() {
     if (!st.ffmpeg) toast('ffmpeg 未就绪：' + (st.error || ''), true);
     renderRecents(st.projects || []);
     renderHwChip(st.hwaccel);
-    if (st.hwaccel && st.hwaccel.checking) {
-      setTimeout(async () => {
-        try { renderHwChip(await api('/api/hwaccel', undefined, 'GET')); } catch (e) { /* 掉线时忽略 */ }
-      }, 1500);
-    }
+    if (st.hwaccel && st.hwaccel.checking) pollHw();
     const s = await api('/api/state', undefined, 'GET');
     if (s && s.ready) applyProject(s);
   } catch (e) { /* 首屏无状态是正常的 */ }

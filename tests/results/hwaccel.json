@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "total": 55,
-  "passed": 55,
+  "total": 85,
+  "passed": 85,
   "failed": [],
   "final_status": {
     "checked": true,
@@ -9,14 +9,14 @@
     "backend": "cuda",
     "capable": true,
     "benchmark": {
-      "hw_ms": 411,
-      "sw_ms": 89,
-      "ratio": 4.592,
+      "hw_ms": 453,
+      "sw_ms": 97,
+      "ratio": 4.647,
       "faster": false,
       "valid": true,
       "loops": 24
     },
-    "advisory": "短样片基准：硬件 411ms / 软件 89ms（慢 359%）。本工具以 CPU 滤镜为主，解码帧要回传内存，抵消了硬件收益；追求速度可切 smart / off",
+    "advisory": "短样片基准：硬件 453ms / 软件 97ms（慢 365%）。本工具以 CPU 滤镜为主，解码帧要回传内存，抵消了硬件收益；追求速度可切 smart / off",
     "compiled": [
       "cuda",
       "dxva2",
@@ -33,13 +33,13 @@
       {
         "name": "cuda",
         "ok": true,
-        "reason": "Selecting decoder 'h264' because of requested hwaccel method cuda",
-        "ms": 168
+        "reason": "Reinit context to 320x192, pix_fmt: cuda",
+        "ms": 194
       }
     ],
     "reason": "已启用硬件解码：NVIDIA NVDEC / CUDA (cuda)；实解一帧验证通过",
     "sample": "E:\\顺剪\\顺剪工作台_最终版_便携_20261105-0955\\drama-remix\\data\\hwaccel_probe.mp4",
-    "checked_at": 1795399041,
+    "checked_at": 1795404336,
     "override": "",
     "degraded": false,
     "failures": 0,
@@ -47,7 +47,7 @@
     "last_error": "",
     "decodes": {
       "hardware": 5,
-      "software": 6
+      "software": 7
     },
     "ffmpeg_version": "ffmpeg version 6.1.1-essentials_build-www.gyan.dev Copyright (c) 2000-2023 the FFmpeg developers",
     "backend_label": "NVIDIA NVDEC / CUDA",

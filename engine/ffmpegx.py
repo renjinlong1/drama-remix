@@ -303,7 +303,15 @@ def iter_lines(args: list[str], stream: str = "stderr", timeout: int = 1800,
             overflow = True
             yield from buf
             buf = []
-    if overflow or holder.get("rc") == 0:
+    if overflow:
+        # 已经流出去的行收不回来，不能再重跑（会重复输出）。但统计必须按
+        # 真实 rc：跑失败不能记成"硬件成功"。
+        ok = holder.get("rc") == 0
+        hwaccel.record_decode("hardware" if ok else "software")
+        if not ok:
+            hwaccel.report_failure(f"iter_lines 溢出 rc={holder.get('rc')}")
+        return
+    if holder.get("rc") == 0:
         hwaccel.record_decode("hardware")
         return
     hwaccel.report_failure(f"iter_lines rc={holder.get('rc')}")
@@ -315,11 +323,16 @@ _FFMPEG_VER: str | None = None
 
 
 def version() -> str:
-    """ffmpeg 版本串。`-version` 每次都要起一个进程，缓存住别反复问。"""
+    """ffmpeg 版本串。`-version` 每次都要起一个进程，缓存住别反复问。
+
+    注意：`-version` 写 stdout，而 `run_text` 返回的是 stderr（probe 的解析
+    目标）。这里必须直接拿 stdout，否则永远返回 "unknown"。
+    """
     global _FFMPEG_VER
     if _FFMPEG_VER:
         return _FFMPEG_VER
-    out = run_text(["-version"], timeout=30)
+    p = run(["-version"], timeout=30, check=False, allow_hw=False)
+    out = (p.stdout or p.stderr).decode("utf-8", "replace")
     _FFMPEG_VER = out.splitlines()[0] if out else "unknown"
     return _FFMPEG_VER
 

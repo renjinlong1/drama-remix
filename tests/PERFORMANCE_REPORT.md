@@ -347,7 +347,7 @@ runtime\python.exe tests\bench.py --tag v2 --repeat 1
 
 ## 十一、硬件解码自动识别 / 启用 / 回退（第五轮）
 
-tag `v2026.11.23-hwaccel`。范围：新增 `engine/hwaccel.py`；`ffmpegx.run/run_out/iter_lines`
+初次 tag `v2026.11.23-hwaccel`，二次自检修复 tag `v2026.11.23-hwaccel-fix`。范围：新增 `engine/hwaccel.py`；`ffmpegx.run/run_out/iter_lines`
 统一注入 `-hwaccel` 并在失败时软件重跑；`vision._scan_signals` 与
 `multimodal._audio_envelope` 两条流式解码改为「硬件 → 失败整条软件重跑」；
 `render` 逐段裁切、缩略图、OCR、尾帧、concat 之外的所有解码命令经 `ffmpegx.run` 自动接入。
@@ -355,10 +355,11 @@ tag `v2026.11.23-hwaccel`。范围：新增 `engine/hwaccel.py`；`ffmpegx.run/r
 ### 判定链（为什么不能只看 `ffmpeg -hwaccels`）
 
 1. `ffmpeg -hwaccels` 只列**编译期**支持。本机返回 `cuda / dxva2 / qsv / d3d11va`。
-2. 按平台优先序逐个**真解一帧**，要求 `rc=0` + stderr 有硬件启用证据
-   （`Selecting decoder ... because of requested hwaccel method` / `Reinit context ... pix_fmt: cuda`），
-   并排除 `Device creation failed` / `No device available` 等设备错误。
-   ffmpeg 遇到不支持的编解码器会**静默回退软件且 rc=0**，只看返回码会误判成"启用成功"。
+2. 按平台优先序逐个**真解一帧**，要求 `rc=0` + stderr 出现**硬件帧格式证据**
+   （`Reinit context ... pix_fmt: cuda` / `Format cuda chosen`），并排除
+   `Device creation failed` / `No device available` 等设备错误。
+   **不能**把 `Selecting decoder ... because of requested hwaccel method` 当证据：
+   实测 mpeg4 片会打印这一行且 `rc=0`，实际完全软件解码（二次自检已修正并加回归用例）。
 3. 本机 `qsv` 在列表里但无 Intel oneVPL 设备，实跑 `rc=-1313558101` +
    `Error creating a MFX session: -9`，被正确排除；`cuda / d3d11va / dxva2` 通过。
 4. 自检样片不依赖项目素材：首次用 ffmpeg 生成 1 秒 h264 到 `data/hwaccel_probe.mp4`，之后复用。
@@ -371,13 +372,15 @@ tag `v2026.11.23-hwaccel`。范围：新增 `engine/hwaccel.py`；`ffmpegx.run/r
 单路 = `vision._scan_once` 完整扫描命令；4 路 = `scan_project` 的实际并发度；
 纯解码 = `-an -f null -`（无滤镜）。
 
+二次自检修复后复跑（2026-11-23，数值与首次同量级）：
+
 | 后端 | 单路扫描 | 4 路并发 | 纯解码 | 结果 |
 |---|---:|---:|---:|---|
-| software | 3.61 s | 5.21 s | 0.84 s | 基准 |
-| cuda | 4.34 s (×1.20) | 14.63 s (×2.81) | 3.79 s (×4.51) | 数据一致 |
-| d3d11va | 11.32 s (×3.14) | 15.57 s (×2.99) | 4.40 s (×5.24) | 数据一致 |
-| dxva2 | 10.97 s (×3.04) | 14.74 s (×2.83) | 4.25 s (×5.06) | 数据一致 |
-| qsv | 0.25 s | 0.41 s | 0.28 s | **解码失败**，0 帧，数据无效 |
+| software | 3.67 s | 5.59 s | 0.90 s | 基准 |
+| cuda | 4.65 s (×1.27) | 14.70 s (×2.63) | 3.83 s (×4.26) | 数据一致 |
+| d3d11va | 10.60 s (×2.89) | 15.56 s (×2.78) | 4.36 s (×4.84) | 数据一致 |
+| dxva2 | 11.11 s (×3.03) | 14.81 s (×2.65) | 4.40 s (×4.89) | 数据一致 |
+| qsv | 0.29 s | 0.39 s | 0.27 s | **解码失败**，0 帧，数据无效 |
 
 结论：**本工具的链路上硬件解码全面更慢**。整条链路是 CPU 滤镜 + libx264 编码，
 `-hwaccel` 解出的帧必须回传系统内存，回传与设备初始化抵消了 GPU 解码收益；
@@ -404,16 +407,31 @@ tag `v2026.11.23-hwaccel`。范围：新增 `engine/hwaccel.py`；`ffmpegx.run/r
 | 单条命令硬件失败 / 超时 | 自动软件重跑该命令 | 回退计数 +1、最近错误 |
 | 连续失败 ≥3 次 | 整进程降级软件 | 徽标「自动降级」+ 降级原因 |
 | 命令本身错误（两条都失败） | 按原语义抛错 | 不误计硬件故障 |
-| 换驱动 / 换片源 | 点「重新自检」 | 可传真实片源路径重跑基准 |
+| 换驱动 / 换片源 | 点「重新自检」 | 可传本机视频路径重跑基准（拒绝 URL / UNC） |
 
 接口：`GET /api/hwaccel`、`POST /api/hwaccel/recheck`、`POST /api/hwaccel/mode`；
 `/api/status` 带状态快照，`/api/doctor` 新增「硬件解码 / 后端自检 / 解码建议 / 解码回退」项。
 环境变量 `DC_HWACCEL=auto|smart|off|<后端名>`。
 
+### 二次自检修复（P0 / P1）
+
+| 问题 | 修复 |
+|---|---|
+| `Selecting decoder ... hwaccel method` 被当硬件证据，mpeg4 静默软解误判 | 只认 `Reinit ... pix_fmt: cuda` / `Format ... chosen`；新增 mpeg4 回归用例 |
+| 耗时自检 + 基准放在全局状态锁内，`status` / 每条 ffmpeg 命令被阻塞 | 拆 `_DETECT_LOCK` 与状态短锁；`prefix()` 只读快照；实测慢基准 2 s 时 status/prefix 阻塞 0.0 s |
+| 基准 `min(耗时)` 不看 rc，失败秒退被算成加速 | 只统计 `rc=0` 的轮次，全失败 `valid=false` |
+| `recheck` 的 sample 无校验（任意文件 / URL / 状态被改） | 只接受本机存在的视频文件，拒绝 URL/UNC；非法 400 且不改状态 |
+| POST 接口无来源校验 | 校验 Origin/Referer，只放行 `127.0.0.1 / localhost / ::1` |
+| 自检片只看大小，损坏不重造；data 只读无回退 | 复用前真解一帧校验，坏了重造，失败退临时目录 |
+| `/api/status` 版本恒为 `unknown` | `version()` 改读 stdout |
+| 前端状态不实时、慢机器卡「检测中」 | 60 s 轮询徽标 + 检测未完成时 1.5 s 轮询 |
+| `iter_lines` 溢出把失败记成硬件成功 | 按真实 rc 统计 |
+| 无 GPU 机器上 `test_modes` 两条断言必挂 | 断言改为结果自洽；新增 `compiled=[]` 用例 |
+
 ### 回归验证步骤
 
 ```bat
-runtime\python.exe tests\test_hwaccel.py          :: 55 项：探测/模式/降级/注入/回退/一致性/接口
+runtime\python.exe tests\test_hwaccel.py          :: 85 项：探测/模式/降级/注入/回退/一致性/接口 + 修复回归
 runtime\python.exe tests\prof_hwaccel.py          :: 可复现收益基准，写 tests/results/hwaccel_perf.json
 runtime\python.exe tests\test_vision_robust.py    :: 32 项
 runtime\python.exe tests\test_pipeline.py         :: 110 项，结果指纹不变
@@ -421,6 +439,6 @@ runtime\python.exe tests\test_multimodal.py       :: 35 项
 runtime\python.exe tests\test_autocut.py          :: 43 项
 ```
 
-判定标准：`test_hwaccel` 55 项 0 失败（含"硬件失败整体软件重跑"与"逐条一致"）；
-全量 13 个套件 435 项断言 0 失败；`prof_hwaccel` 中成功后端都产出 1799/8438 条数据，
-失败后端明确标 `ok=false`。本轮结果：13 套件全绿，435/435 通过。
+判定标准：`test_hwaccel` 85 项 0 失败（含"硬件失败整体软件重跑""逐条一致"与 P0/P1 修复回归）；
+全量 13 个套件 465 项断言 0 失败；`prof_hwaccel` 中成功后端都产出 1799/8438 条数据，
+失败后端明确标 `ok=false`。本轮结果：13 套件全绿，465/465 通过（修复前 435 项）。

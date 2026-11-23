@@ -17,9 +17,10 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 import uvicorn
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -152,17 +153,46 @@ def hwaccel_state():
     return hwaccel.detect()
 
 
+def _origin_ok(value: str | None) -> bool:
+    """只放行本机页面（空 Origin/Referer 视为本地直接调用，如 curl）。"""
+    if not value:
+        return True
+    try:
+        host = (urlparse(value).hostname or "").lower()
+    except Exception:  # noqa: BLE001
+        return False
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
+def _local_only(request) -> None:
+    """挡掉外部网页对本地接口的跨站调用（本地服务没有鉴权）。"""
+    if request is None:
+        return
+    origin = request.headers.get("origin") or ""
+    referer = request.headers.get("referer") or ""
+    if (origin and not _origin_ok(origin)) or (referer and not _origin_ok(referer)):
+        raise HTTPException(403, "只允许本机界面调用该接口")
+
+
 @app.post("/api/hwaccel/recheck")
-def hwaccel_recheck(body: dict = Body(default={})):
-    """重新自检。可传 sample=真实片源路径，让基准更贴近当前这部剧。"""
+def hwaccel_recheck(body: dict = Body(default={}), request: Request = None):
+    """重新自检。可传 sample=本机视频路径，让基准更贴近当前这部剧。"""
+    _local_only(request)
     body = body if isinstance(body, dict) else {}
     sample = body.get("sample") or None
+    if sample:
+        good = hwaccel.valid_sample(sample)
+        if not good:
+            raise HTTPException(400, "sample 必须是本机存在且可解码的视频文件路径"
+                                     "（不支持网络路径 / URL）")
+        sample = good
     return hwaccel.recheck(sample)
 
 
 @app.post("/api/hwaccel/mode")
-def hwaccel_mode(body: dict = Body(default={})):
+def hwaccel_mode(body: dict = Body(default={}), request: Request = None):
     """切换模式：auto(能力可用即启用) / smart(仅实测更快才启用) / off / 具体后端名。"""
+    _local_only(request)
     body = body if isinstance(body, dict) else {}
     mode = str(body.get("mode") or "auto").strip().lower()
     if mode not in ("auto", "smart", "off") and mode not in hwaccel.compiled_methods():
