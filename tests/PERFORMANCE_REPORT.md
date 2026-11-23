@@ -474,3 +474,23 @@ tag `v2026.11.23-highlight`。新增 `engine/hlcut.py`；`tailcard` 支持任意
 新增 `tests/test_hlcut.py` 38 项：选片 / 时长 / 条数、结尾 auto/point/custom、片段尾帧检测
 （运动 / 定帧 / fixed）、码率预算、渲染 4MB 与 2MB 上限及自动重压、接口 400。
 全量 14 个套件 **503 项断言 0 失败**（原 13 套件 465 项）。
+
+## 十三、钩子池 100 / 上限配置 / 场景簇换批
+
+tag `v2026.11.23-hookpool`。`engine/analyze.py`：
+
+- `find_highlights` 默认 `top_k=100,min_keep=100`；`analyze(..., hook_limit)` 读项目
+  `hook_limit`（10–100，默认 100）；`hook_batch` 缺省按项目上限出批。
+- 场景簇：同集画面重叠 >50% 只留最高分代表；视觉型高光独立成簇，
+  `ensure_front` 不再用视觉候选做补位牺牲（实测 20 集后段 5 个打斗高光曾被前段加密全部换出）。
+- 换批：`exclude` 传上一批候选，按场景重叠 >40% 整体排除；`allow_old=False` 默认，
+  批间不重叠；旧 `exclude_keys` 接口保留。
+- `app.py /api/hooks/reseed` 支持 `hook_limit` / `new_seed` / `exclude` / `reset`；
+  项目保存 `hook_limit`、`hook_current_items`、`hook_shown_items`；前端「开头钩子」页新增
+  「候选上限」10–100，改完立即重算。
+- 真实 40 集：100 条池 0.1 秒；连续换 4 批 100/72/15/5，批间 key 重叠 0；
+  30 条上限连换 4 批各 30、重叠 0；边界 5→10、200→100。
+
+回归：新增 `tests/test_hook_limit.py` 39 项；`test_hook_recall` 11 项
+（召回 100%、前 24 条精度 100%、全池 50%）；`test_hook_pool` 16 项；
+全量 15 个套件 **537 项断言 0 失败**。

@@ -156,6 +156,10 @@ def evaluate(a: dict, gt: list[dict]) -> dict:
             ok = t == g["family"]
         type_ok += 1 if ok else 0
     used = sum(1 for c in hl if any(cover(c, g) >= 0.4 for g in gt))
+    # 池子扩到 100 后，尾部是备选（普通过渡戏），原有 24 条时代的精度要求
+    # 应该看前 24 条；全池 precision 只作为"高光仍占主导"的下限。
+    top = hl[:24]
+    used_top = sum(1 for c in top if any(cover(c, g) >= 0.4 for g in gt))
     return {
         "highlights": len(hl),
         "gt": len(gt),
@@ -163,6 +167,7 @@ def evaluate(a: dict, gt: list[dict]) -> dict:
         "type_acc": round(type_ok / max(1, len(covered)), 3),
         "aligned": round(aligned / max(1, len(covered)), 3),
         "precision": round(used / max(1, len(hl)), 3),
+        "precision_top": round(used_top / max(1, len(top)), 3),
         "median_rank": sorted(ranks)[len(ranks) // 2] if ranks else None,
         "missed": [g["kind"] for g in gt if g not in covered],
     }
@@ -188,7 +193,8 @@ def main() -> int:
     ck("整体召回 ≥ 80%", m["recall"] >= 0.80, m["recall"])
     ck("类型标注准确率 ≥ 70%", m["type_acc"] >= 0.70, m["type_acc"])
     ck("起点对齐 ≥ 80%（第一帧就是那一下）", m["aligned"] >= 0.80, m["aligned"])
-    ck("候选里凑数片段不超过 25%", m["precision"] >= 0.75, m["precision"])
+    ck("前 24 条里凑数片段不超过 25%", m["precision_top"] >= 0.75, m["precision_top"])
+    ck("全池仍以高光为主（≥40%）", m["precision"] >= 0.40, m["precision"])
     ck("候选里不再清一色动作冲突",
        len({c.get("primary_type") for c in a["highlights"]}) >= 3,
        sorted({c.get("primary_type") for c in a["highlights"]}))

@@ -1,0 +1,201 @@
+{
+  "checks": [
+    {
+      "name": "40 集能铺出接近 100 条",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "不超过 100 条硬上限",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "覆盖足够多集",
+      "ok": true,
+      "detail": "40"
+    },
+    {
+      "name": "每条都有集号/起止/分数",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "同一场戏不会重复占候选位",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "find_highlights top_k=10 生效",
+      "ok": true,
+      "detail": "10"
+    },
+    {
+      "name": "find_highlights top_k=10 不空",
+      "ok": true,
+      "detail": "10"
+    },
+    {
+      "name": "find_highlights top_k=30 生效",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "name": "find_highlights top_k=30 不空",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "name": "find_highlights top_k=60 生效",
+      "ok": true,
+      "detail": "60"
+    },
+    {
+      "name": "find_highlights top_k=60 不空",
+      "ok": true,
+      "detail": "60"
+    },
+    {
+      "name": "analyze hook_limit=30 生效",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "name": "analyze 返回上限字段",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "name": "hook_meta 带上限",
+      "ok": true,
+      "detail": "{'front_eps': 15, 'front_count': 23, 'eps': 20, 'boost': 1.2, 'limit': 30}"
+    },
+    {
+      "name": "下限钳到 10",
+      "ok": true,
+      "detail": "(10, 10)"
+    },
+    {
+      "name": "上限钳到 100",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "项目里保存的上限优先生效",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "name": "项目上限限制候选数",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "name": "重开项目按 hook_current_items 还原",
+      "ok": true,
+      "detail": "12"
+    },
+    {
+      "name": "还原时仍带项目上限",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "name": "第 1 批非空",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "第 1 批与历史场景不重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 1 批 key 也不重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 2 批非空",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "第 2 批与历史场景不重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 2 批 key 也不重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 3 批非空",
+      "ok": true,
+      "detail": "70"
+    },
+    {
+      "name": "第 3 批与历史场景不重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "第 3 批 key 也不重叠",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "exclude_keys 旧接口仍生效",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "API 改上限 30 生效",
+      "ok": true,
+      "detail": "(30, 30)"
+    },
+    {
+      "name": "改上限写入项目",
+      "ok": true,
+      "detail": "30"
+    },
+    {
+      "name": "API 下限钳到 10",
+      "ok": true,
+      "detail": "(10, 10)"
+    },
+    {
+      "name": "API 上限钳到 100",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "换批返回上限字段",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "换批返回当前批",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "重置可复现",
+      "ok": true,
+      "detail": "(44, 44)"
+    },
+    {
+      "name": "项目 payload 带 hook_limit",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "旧项目缺省按 100",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "total": 39,
+  "failed": 0
+}

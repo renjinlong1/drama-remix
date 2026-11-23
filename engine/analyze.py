@@ -822,7 +822,10 @@ def ensure_front(picked: list[dict], cands: list[dict], goal: int,
                 break
             if any(_overlap_near(c, p) for p in picked):
                 continue
-            back = [p for p in picked if not p.get("front")]
+            # 视觉候选是独立场景，不能被"前段加密"挤掉（实测 20 集里后段 5 个
+            # 打斗高光正好被 front_min 补位全部换出，召回从 100% 掉到 75%）
+            back = [p for p in picked
+                    if not p.get("front") and not p.get("visual_only")]
             if not back:
                 break
             picked.remove(min(back, key=lambda p: p.get("rank_score", 0)))
@@ -835,7 +838,10 @@ def ensure_front(picked: list[dict], cands: list[dict], goal: int,
             front = [p for p in picked if p.get("front")]
             if len(front) <= front_max:
                 break
-            victim = min(front, key=lambda p: p.get("rank_score", 0))
+            victim = min((p for p in front if not p.get("visual_only")),
+                         key=lambda p: p.get("rank_score", 0), default=None)
+            if victim is None:
+                break
             pool = [c for c in cands
                     if not c.get("front") and id(c) not in chosen
                     and not any(_overlap_near(c, p) for p in picked if p is not victim)]
@@ -952,16 +958,18 @@ def hook_key(c: dict) -> str:
     return f"{int(c['ep'])}@{float(c['g0']):.1f}"
 
 
-def find_highlights(beats: list[dict], top_k: int = 18,
+def find_highlights(beats: list[dict], top_k: int = 100,
                     min_dur: float = 4.5, max_dur: float = 20.0,
-                    min_keep: int = 15, seed: int | None = None,
+                    min_keep: int = 100, seed: int | None = None,
                     extra_visual: list[dict] | None = None,
-                    visual_reserve: int = 3, type_quota: int = 1,
+                    visual_reserve: int = 8, type_quota: int = 1,
                     front_eps: int = FRONT_EPS,
                     front_boost: float = FRONT_BOOST,
                     exclude_keys: set[str] | None = None,
+                    exclude: list[dict] | None = None,
+                    allow_old: bool = False,
                     want_pool: bool = False):
-    """找出 15-20 个高光开头候选。
+    """找出最多 100 个高光开头候选（能挑多少挑多少，铺满全剧）。
 
     一段剧情算不算高光，看三件事：
     1. **台词在冲突**——打脸、揭身份、退婚、下跪（LEX 词库 + 感叹/反问）
@@ -969,13 +977,18 @@ def find_highlights(beats: list[dict], top_k: int = 18,
        这类镜头往往一句台词都没有，只靠字幕永远抓不到）
     3. **位置合适**——卡在集末、靠近反转，作为开头更抓人
 
-    以前只取前 6 个，用户真正能挑的太少。现在按"集"配额铺开：
-    每集最多 2 条、同集间隔 5 秒以上，先铺满 18 个；实在不够再放宽。
+    候选按"场景簇"去重：同一集里画面重叠 >50% 的窗口只留分数最高的那个。
+    以前同一场戏从第 1/2/3 句起头会各占一条，24 条里经常只有 8 场戏；
+    聚簇后每条候选都来自不同场景，换一批换掉的才是整场戏。
+
+    exclude：上一批候选（list[dict]）。换批时把与它们场景重叠 >50% 的候选整体排除；
+    allow_old=False 时只用没看过的场景，fresh 不够就返回更少（由上层提示抽干）。
+    exclude_keys：旧的逐条排除接口，保留兼容。
 
     seed：同一个剧本换台电脑、或者点「换一批」时给候选打散一点。
     评分只做 ±8% 的抖动，所以差一截的候选不会顶掉明显更好的，
-    但相邻分数的会互换位置、入选的那 18 条也会换掉一部分（实测 18 条里换 10 条上下，
-    最好的一条也常常换人）——这样两台电脑导入同一部剧不会得到一模一样的开头池。
+    但相邻分数的会互换位置、入选的候选也会换掉一部分——这样两台电脑导入同一部剧
+    不会得到一模一样的开头池。
     """
     cands: list[dict] = []
     n = len(beats)
@@ -1122,10 +1135,58 @@ def find_highlights(beats: list[dict], top_k: int = 18,
             c["_eff"] = base
     cands.sort(key=lambda c: (-c["_eff"], c["g0"]))
 
-    # 「换一批」：把已经展示过的候选整批排除，再从剩下没露过面的里组一批。
-    # 放在排序之后、配额之前，剩下的池子仍按原规则做去重 / 配额 / 前段密度。
+    # 场景簇：同集画面重叠 >50% 的窗口只留一个代表（视觉候选独立保留）。
+    # 以前同一场戏从第 1/2/3 句起头会各占一条，候选看着多、实际只有几场戏；
+    # 聚簇后每条候选都来自不同场景，换一批换掉的才是整场戏。
+    def _cluster_reps(items: list[dict]) -> list[dict]:
+        by_ep: dict[int, list[dict]] = {}
+        for c in items:
+            by_ep.setdefault(int(c["ep"]), []).append(c)
+        reps: list[dict] = []
+        for group in by_ep.values():
+            # 视觉候选先落位：无台词打斗本身就是一个独立场景，
+            # 与它重叠的台词窗口（多是打斗前后的边界句）要让位，否则
+            # 打斗会被当成"重复窗口"整段挤掉（实测 5 个 visual 标注全漏）。
+            kept: list[dict] = [c for c in group if c.get("visual_only")]
+            for c in group:
+                if c.get("visual_only"):
+                    continue
+                ov_hit = False
+                for k in kept:
+                    ov = min(k["g1"], c["g1"]) - max(k["g0"], c["g0"])
+                    if ov > 0.5 * min(k["g1"] - k["g0"], c["g1"] - c["g0"]):
+                        ov_hit = True
+                        break
+                if not ov_hit:
+                    kept.append(c)
+            reps.extend(kept)
+        reps.sort(key=lambda c: (-c["_eff"], c["g0"]))
+        return reps
+
+    cands = _cluster_reps(cands)
     if exclude_keys:
         cands = [c for c in cands if hook_key(c) not in exclude_keys]
+
+    # 换一批：把上一批所在的那场戏整个排除；fresh 优先，
+    # allow_old 时才允许用旧场景垫底（默认不允许，保证批间不重叠）。
+    if exclude:
+        def _is_old(c: dict) -> bool:
+            for x in exclude:
+                try:
+                    xe, xg0, xg1 = int(x["ep"]), float(x["g0"]), float(x["g1"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if xe != int(c["ep"]):
+                    continue
+                # 换批用 0.4（比聚簇的 0.5 更宽）：同场相邻起头常只重叠 45-50%，
+                # 0.5 会漏掉它们，用户就会觉得"换了一批还是同一场戏"。
+                ov = min(xg1, c["g1"]) - max(xg0, c["g0"])
+                if ov > 0.4 * min(xg1 - xg0, c["g1"] - c["g0"]):
+                    return True
+            return False
+        fresh = [c for c in cands if not _is_old(c)]
+        old = [c for c in cands if _is_old(c)]
+        cands = (fresh + old) if allow_old else fresh
     pool_total = len(cands)
 
     def pick(want: int, per_ep: int, gap: float) -> list[dict]:
@@ -1265,25 +1326,37 @@ def find_endings(beats: list[dict], total: float, top_k: int = 8,
     return picked
 
 
-def hook_batch(proj: dict, exclude_keys: set[str] | None = None,
-               seed: int | None = None, top_k: int = 24,
-               min_keep: int = 15) -> tuple[list[dict], int]:
+def hook_batch(proj: dict, exclude: list[dict] | None = None,
+               exclude_keys: set[str] | None = None,
+               seed: int | None = None, top_k: int | None = None,
+               min_keep: int | None = None,
+               allow_old: bool = False) -> tuple[list[dict], int]:
     """按排除集合组一批高光开头（换一批用）。
 
-    返回 (候选, 排除之后池子里还剩多少条候选)。界面用剩余数告诉用户
-    "候选池还剩 N 条没看过"，而不是只报本批有几条。
+    exclude 传上一批候选（按场景重叠整体排除），exclude_keys 兼容旧的逐条排除。
+    top_k / min_keep 缺省读项目的 hook_limit（10-100，默认 100）。
+    返回 (候选, 排除之后池子里还剩多少条候选)。
     """
+    try:
+        lim = int(top_k if top_k is not None else (proj.get("hook_limit") or 100))
+    except (TypeError, ValueError):
+        lim = 100
+    lim = min(100, max(10, lim))
+    mk = lim if min_keep is None else min(100, max(1, int(min_keep)))
     beats = segment_beats(proj)
     acts = proj.get("acts") or []
     attach_acts(beats, acts)
     visual = find_visual_highlights(proj, beats, acts)
     sd = proj.get("hook_seed") if seed is None else seed
-    return find_highlights(beats, top_k=top_k, min_keep=min_keep, seed=sd,
-                           extra_visual=visual, exclude_keys=exclude_keys,
+    return find_highlights(beats, top_k=lim, min_keep=mk, seed=sd,
+                           extra_visual=visual, exclude=exclude,
+                           exclude_keys=exclude_keys, allow_old=allow_old,
                            want_pool=True)
 
 
-def analyze(proj: dict, seed: int | None = None) -> dict:
+def analyze(proj: dict, seed: int | None = None,
+            exclude: list[dict] | None = None,
+            hook_limit: int | None = None) -> dict:
     beats = segment_beats(proj)
     acts = proj.get("acts") or []
     attach_acts(beats, acts)
@@ -1294,6 +1367,13 @@ def analyze(proj: dict, seed: int | None = None) -> dict:
     total = proj["total"]
     # 钩子池的随机种子跟着项目走：项目里存了就每次一致，没有（老项目）就保持原来的确定性排序
     sd = proj.get("hook_seed") if seed is None else seed
+    # 数量上限：手动设置（项目里存的 hook_limit）优先，没设就自动铺满全剧、封顶 100
+    lim = hook_limit if hook_limit else proj.get("hook_limit")
+    try:
+        lim = int(lim)
+    except (TypeError, ValueError):
+        lim = 0
+    lim = min(100, max(10, lim)) if lim else 100
     # 换过一批之后，重开项目要回到**最后展示的那一批**，而不是又回到第一屏。
     # 直接存下那一批的内容：只存 key 再重算的话，排除旧候选会改变去重/配额的
     # 补位顺序，回来的一批和用户刚看到的对不上。
@@ -1307,16 +1387,19 @@ def analyze(proj: dict, seed: int | None = None) -> dict:
     if not hl:
         shown = set(proj.get("hook_shown") or [])
         current = set(proj.get("hook_current") or [])
-        hl = find_highlights(beats, top_k=24, min_keep=15, seed=sd,
-                             extra_visual=visual, exclude_keys=shown - current)
+        hl = find_highlights(beats, top_k=lim, min_keep=lim, seed=sd,
+                             extra_visual=visual, exclude=exclude,
+                             exclude_keys=(shown - current) if not exclude else None)
     return {
         "beats": beats,
         "highlights": hl,
+        "hook_limit": lim,
         "hook_meta": {
             "front_eps": FRONT_EPS,
             "front_count": sum(1 for c in hl if c.get("front")),
             "eps": len(proj["episodes"]),
             "boost": FRONT_BOOST,
+            "limit": lim,
         },
         "acts": len(acts),
         "visual_cands": len(visual),

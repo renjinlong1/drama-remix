@@ -494,6 +494,7 @@ def _proj_payload(p: dict, a: dict) -> dict:
         "stats": a["stats"],
         "beats": a["beats"],
         "highlights": a["highlights"],
+        "hook_limit": p.get("hook_limit", 100),
         "hook_meta": a.get("hook_meta") or {},
         "acts": a.get("acts", 0),
         "endings": a.get("endings", []),
@@ -516,13 +517,23 @@ def state():
     return Response(content=body, media_type="application/json; charset=utf-8")
 
 
+def _merge_hook_items(old, new) -> list[dict]:
+    """按 hook_key 合并展示过的候选，保留完整 g0/g1，供场景簇换批排除。"""
+    by: dict[str, dict] = {}
+    for c in list(old or []) + list(new or []):
+        if isinstance(c, dict) and c.get("ep") is not None:
+            by[analyzemod.hook_key(c)] = c
+    return list(by.values())
+
+
 @app.post("/api/hooks/reseed")
 def hooks_reseed(body: dict = Body(default={})):
-    """换一批高光开头候选：真正从**没看过**的画面里再抽一批。
+    """换一批高光开头候选 / 按新上限重算。
 
-    以前只是把已识别的候选重新排序，第 2 次点往往还是那 18 条（只是顺序变了）。
-    现在把展示过的候选整批排除，从剩下的池子里重新组一批；池子空了就明确
-    告诉用户没有新的了，并允许一键从头再看。
+    换一批：把展示过的候选按**场景簇整体排除**（不是逐条换起头），
+    从没看过的画面里再抽一批；池子空了明确提示，并允许一键从头再看。
+    改上限：body 里带 hook_limit（10-100）+ new_seed=false + exclude=[]，
+    只按全池重算，不换画面/不换种子；选中开头由前端按 key 保留。
     """
     with LOCK:
         p = STATE["project"]
@@ -530,43 +541,82 @@ def hooks_reseed(body: dict = Body(default={})):
     if not p:
         raise HTTPException(400, "还没导入剧集")
 
+    body = body or {}
     reset = bool(body.get("reset"))
     cur = (a or {}).get("highlights") or []
-    if reset:
-        shown: set[str] = set()
-    else:
-        # 当前这批也算"已展示"：第一次换一批时它还没进过 hook_shown
-        shown = set(p.get("hook_shown") or [])
-        shown |= {analyzemod.hook_key(c) for c in cur}
+    # 记住导入时的种子：重置回到第一批时恢复它，而不是用换批时的新种子
+    if "hook_seed_initial" not in p:
+        p["hook_seed_initial"] = p.get("hook_seed")
+    try:
+        lim = int(body.get("hook_limit"))
+    except (TypeError, ValueError):
+        lim = 0
+    if lim:
+        p["hook_limit"] = max(10, min(100, lim))
+    new_seed = bool(body.get("new_seed", True))
 
-    hl, pool = analyzemod.hook_batch(p, exclude_keys=shown or None)
+    if reset:
+        p["hook_shown"] = []
+        p["hook_current"] = []
+        p["hook_current_items"] = []
+        p["hook_shown_items"] = []
+        p["hook_seed"] = p.get("hook_seed_initial")
+        new_seed = False          # 重置回到第一批，不换种子
+        exclude: list[dict] = []
+    else:
+        # 改上限：前端显式传 exclude=[] + new_seed=false，只按全池重算；
+        # 换批：历史展示过的场景 + 当前批一起排除，保证批间不重叠。
+        # 当前这一批也要进展示记录：第一次换批时它还没进过 hook_shown_items，
+        # 只记 hl 会让第 2 批把第 1 批排除了、却仍和第 1 屏重叠。
+        p["hook_shown_items"] = _merge_hook_items(p.get("hook_shown_items"), cur)
+        p["hook_shown"] = sorted(set(p.get("hook_shown") or [])
+                                 | {analyzemod.hook_key(c) for c in cur})
+        if "exclude" in body and body.get("new_seed") is False:
+            exclude = list(body.get("exclude") or [])
+        else:
+            exclude = _merge_hook_items(p.get("hook_shown_items"), cur)
+            exclude += list(body.get("exclude") or [])
+        if new_seed:
+            p["hook_seed"] = random.randint(1, 2 ** 31 - 1)
+
+    hl, pool = analyzemod.hook_batch(
+        p, exclude=exclude or None,
+        top_k=p.get("hook_limit", 100), allow_old=False)
     # 少于 3 条不值得换一屏，按"没新的了"处理，但把它报出来
     if not reset and len(hl) < 3:
-        # 不换屏，只把"当前这批"记进已展示，免得下次又把同一批当成没看过
-        p["hook_shown"] = sorted(shown)
+        p["hook_shown"] = sorted(set(p.get("hook_shown") or [])
+                                 | {analyzemod.hook_key(c) for c in cur})
+        p["hook_shown_items"] = _merge_hook_items(p.get("hook_shown_items"), cur)
         projmod.save(p)
         left = max(0, pool)
         if left:
             msg = f"没看过的候选只剩 {left} 个，凑不成新的一批了"
         else:
-            msg = f"这部剧能用的高光候选已经全部展示过了（共 {len(shown)} 个）"
+            msg = f"这部剧能用的高光候选已经全部展示过了（共 {len(p['hook_shown'])} 个）"
         return {"ok": False, "exhausted": True, "can_reset": True,
-                "msg": msg, "left": left, "shown_total": len(shown),
+                "msg": msg, "left": left, "shown_total": len(p["hook_shown"]),
+                "hook_limit": p.get("hook_limit", 100),
                 "highlights": cur}
 
-    p["hook_shown"] = sorted(shown | {analyzemod.hook_key(c) for c in hl})
+    p["hook_shown"] = sorted(set(p.get("hook_shown") or [])
+                             | {analyzemod.hook_key(c) for c in hl})
     p["hook_current"] = [analyzemod.hook_key(c) for c in hl]
     p["hook_current_items"] = hl
+    p["hook_shown_items"] = _merge_hook_items(p.get("hook_shown_items"), hl)
     projmod.save(p)
     with LOCK:
         meta = dict((a or {}).get("hook_meta") or {})
         meta["front_count"] = sum(1 for c in hl if c.get("front"))
-        STATE["analysis"] = {**(a or {}), "highlights": hl, "hook_meta": meta}
+        meta["limit"] = p.get("hook_limit", 100)
+        STATE["analysis"] = {**(a or {}), "highlights": hl, "hook_meta": meta,
+                             "hook_limit": p.get("hook_limit", 100)}
         # 钩子换了，旧方案的开头已经不是这一批
         STATE["plan"] = None
     _prewarm_thumbs()
     return {"ok": True, "seed": p.get("hook_seed"), "highlights": hl,
-            "remaining": max(0, pool - len(hl)), "shown_total": len(p["hook_shown"])}
+            "hook_limit": p.get("hook_limit", 100),
+            "remaining": max(0, pool - len(hl)),
+            "shown_total": len(p["hook_shown"])}
 
 
 def _restore_last_project():

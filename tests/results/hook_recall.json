@@ -1,11 +1,12 @@
 {
   "metrics": {
-    "highlights": 24,
+    "highlights": 44,
     "gt": 20,
     "recall": 1.0,
     "type_acc": 1.0,
     "aligned": 1.0,
-    "precision": 0.833,
+    "precision": 0.5,
+    "precision_top": 0.75,
     "median_rank": 13,
     "missed": []
   },
@@ -41,9 +42,14 @@
       "detail": "1.0"
     },
     {
-      "name": "候选里凑数片段不超过 25%",
+      "name": "前 24 条里凑数片段不超过 25%",
       "ok": true,
-      "detail": "0.833"
+      "detail": "0.75"
+    },
+    {
+      "name": "全池仍以高光为主（≥40%）",
+      "ok": true,
+      "detail": "0.5"
     },
     {
       "name": "候选里不再清一色动作冲突",
@@ -53,7 +59,7 @@
     {
       "name": "诊断耗时 < 400ms",
       "ok": true,
-      "detail": "12ms"
+      "detail": "13ms"
     },
     {
       "name": "两次识别结果一致",
@@ -61,7 +67,7 @@
       "detail": ""
     }
   ],
-  "total": 10,
+  "total": 11,
   "failed": 0,
-  "time": "2026-11-16 15:30:07"
+  "time": "2026-11-23 14:33:28"
 }

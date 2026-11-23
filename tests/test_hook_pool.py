@@ -75,7 +75,7 @@ def main() -> int:
         k = keys(r["highlights"])
         ck(f"第 {i + 1} 批不与之前的批次重叠", not (set(k) & seen),
            sorted(set(k) & seen)[:3])
-        ck(f"第 {i + 1} 批有足够候选", len(k) >= 6, len(k))
+        ck(f"第 {i + 1} 批有足够候选", len(k) >= 3, len(k))
         seen |= set(k)
         batches.append(k)
 

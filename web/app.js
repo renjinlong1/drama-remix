@@ -1,7 +1,7 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-23.3';
+window.__APP_BUILD__ = '2026-11-23.4';
 
 /* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
    以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
@@ -31,7 +31,7 @@ const S = {
   hkShift: {}, endShift: {},
   batchAlloc: 'total', batchTotal: 20, outdir: '', outShown: '', nameTpl: '',
   scanPending: false,
-  hookMeta: {},
+  hookMeta: {}, hookLimit: 100,
   auto: { deep: false, plan: null, topics: [], stats: null },
   hl: { plan: null, target: 600, endMode: 'auto', endKey: '', tail: 'auto' },
   target: 360, lead: 1, tailMode: 'auto', tailFixed: 2, efVideoDur: 0, jobTimer: null, saveTimer: null,
@@ -210,6 +210,8 @@ function applyProject(d) {
   $('#acList').innerHTML = ''; $('#acRender').hidden = true;
   loadAutoState();
   S.name = d.name; S.total = d.total; S.eps = d.eps || [];
+  S.hookLimit = Math.max(10, Math.min(100, Number(d.hook_limit) || 100));
+  if ($('#hookLimit')) $('#hookLimit').value = String(S.hookLimit);
   S.folder = d.folder || S.folder || '';
   S.beats = d.beats || []; S.highlights = d.highlights || [];
   S.hookMeta = d.hook_meta || {};
@@ -935,9 +937,10 @@ function renderHooks() {
   const all = hookAll();
   const shown = hookShown();
   const fm = S.hookMeta || {};
+  const lim = Number(fm.limit) || S.hookLimit || 100;
   $('#hkCount').textContent = all.length
-    ? ('共 ' + all.length + ' 个' + (fm.front_count
-        ? ' · 前' + fm.front_eps + '集 ' + fm.front_count + ' 个' : ''))
+    ? ('共 ' + all.length + ' 个' + (all.length >= lim ? '（上限 ' + lim + '）' : '') +
+       (fm.front_count ? ' · 前' + fm.front_eps + '集 ' + fm.front_count + ' 个' : ''))
     : '—';
   $('#btnResetHooks').hidden = !S.hkHide.size && !S.hkAdd.length && !Object.keys(S.hkShift).length;
   if (!all.length) {
@@ -3217,7 +3220,7 @@ $('#btnShuffleHooks').onclick = async () => {
   const label = btn.textContent;
   btn.textContent = '正在换…';
   try {
-    let r = await api('/api/hooks/reseed', {});
+    let r = await api('/api/hooks/reseed', { hook_limit: S.hookLimit });
     // 池子空了：明确告诉用户，并允许从头再看一遍（不改变当前这一批）
     if (r && r.exhausted) {
       const msg = r.msg || '已经把所有高光候选都看过了';
@@ -3240,6 +3243,33 @@ $('#btnShuffleHooks').onclick = async () => {
   } finally {
     btn.textContent = label;
     delete btn.dataset.busy;
+  }
+};
+
+/* 改「钩子候选上限」：不换种子、不排除旧场景，只按新上限重算；选中开头按 key 保留 */
+$('#hookLimit').onchange = async (e) => {
+  let v = Math.round(Number(e.target.value) || 100);
+  v = Math.max(10, Math.min(100, v));
+  e.target.value = String(v);
+  S.hookLimit = v;
+  if (!S.ready) return;
+  const btn = $('#btnShuffleHooks');
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '重算中…';
+  try {
+    const r = await api('/api/hooks/reseed', {
+      hook_limit: v, new_seed: false, exclude: [],
+    });
+    const hs = (r && r.highlights) || [];
+    if (!hs.length) throw new Error('没有返回候选');
+    applyHookBatch(hs);
+    toast('钩子候选已按 ' + v + ' 条上限重算（共 ' + hs.length + ' 条）');
+  } catch (err) {
+    toast('改上限失败：' + ((err && err.message) || err), true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
   }
 };
 $('#btnAddHook').onclick = () => {

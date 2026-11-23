@@ -228,6 +228,12 @@
           <button class="btn xs ghost" id="btnClearHook"
             title="一次清空开头钩子、所有卡片的 ×N 条数、指定结尾和结尾钩子">清空全部选择</button>
         </div>
+        <label class="brow" id="hookLimitRow"
+          title="高光钩子候选数量上限：默认 100＝自动识别全剧高光；可填 10–100，改完立即按新上限重算，已选开头保持不变">
+          <span class="blab">候选上限</span>
+          <input id="hookLimit" class="input num" type="number" min="10" max="100" step="1" value="100">
+          <span class="blab">条</span>
+        </label>
         <div class="hookbox" id="hookBox">
           <div class="empty sm">还没设开头钩子</div>
         </div>
