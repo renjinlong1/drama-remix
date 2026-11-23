@@ -305,8 +305,17 @@ def scan(body: dict = Body(...)):
             _job_emit(89, f"时间轴先出，{pending_before} 集画面动作转后台补扫", "acts")
             print(f"[acts] 延后：待扫 {pending_before} 集 > 阈值 {ACTS_DEFER_AFTER}", flush=True)
         elif pending_before <= 0:
-            p["acts"] = vision.cached_events(p, ROOT)
-            acts_info["events"] = len(p["acts"])
+            # 0 集待扫也走一次 scan_project：如果命中的是老「按剧名」缓存，
+            # 这里顺手迁到新的「文件夹名 + 路径哈希」键上，再读事件（不解码）。
+            try:
+                v = vision.scan_project(p, ROOT)
+                p["acts"] = v["events"]
+                acts_info.update(events=len(v["events"]),
+                                 cache_hit=v.get("cache_hit", 0),
+                                 error=v.get("cache_error") or "")
+            except Exception:  # noqa: BLE001
+                p["acts"] = vision.cached_events(p, ROOT)
+                acts_info["events"] = len(p["acts"])
             print(f"[acts] 缓存命中：{len(p['acts'])} 个动作点", flush=True)
         else:
             _job_emit(86, "扫描画面冲突（打人 / 砸东西 / 情绪爆发）", "acts")
