@@ -178,13 +178,14 @@
         <button class="rtab" data-t="hook">开头钩子</button>
         <button class="rtab" data-t="pack">包装</button>
         <button class="rtab" data-t="auto">自动混剪</button>
+        <button class="rtab" data-t="hl" title="高光剪辑：整剧扫描高光片段，按目标时长决定条数，每段去尾帧，可指定结尾">高光</button>
         <span class="hint" id="rTabHint"></span>
       </div>
 
       <div class="cb scroll tabpane" id="panePlan">
         <label class="lab">目标时长 <b id="tgVal">6.0 分钟</b></label>
-        <input type="range" id="target" min="120" max="480" step="10" value="360" class="rng">
-        <div class="scale"><span>2 分</span><span>4 分</span><span>6 分</span><span>8 分</span></div>
+        <input type="range" id="target" min="120" max="600" step="10" value="360" class="rng">
+        <div class="scale"><span>2 分</span><span>4 分</span><span>6 分</span><span>8 分</span><span>10 分</span></div>
         <select id="endMode" class="input" title="自动：在目标时长附近挑最抓人的结束点，优先卡在集末">
           <option value="auto">结尾：自动卡在最抓人的点</option>
           <option value="point">结尾：用我指定的结尾钩子</option>
@@ -273,6 +274,51 @@
         <div class="acmetrics" id="acMetrics" hidden></div>
         <div class="aclist" id="acList"></div>
         <button type="button" class="btn wide primary" id="acRender" hidden>开始出片（自动混剪）</button>
+      </div>
+
+      <div class="cb scroll tabpane" id="paneHl" hidden>
+        <div class="achead">
+          <span class="hint">整剧扫描高光 · 按目标时长决定条数 · 每段去尾帧</span>
+        </div>
+        <label class="lab">目标时长 <b id="hlTgVal">10.0 分钟</b></label>
+        <input type="range" id="hlTarget" min="120" max="900" step="30" value="600" class="rng">
+        <div class="hltargets">
+          <button type="button" class="btn xs ghost" data-hlmin="300">5 分钟</button>
+          <button type="button" class="btn xs ghost" data-hlmin="600">10 分钟</button>
+          <button type="button" class="btn xs ghost" data-hlmin="900">15 分钟</button>
+        </div>
+        <div class="row2">
+          <label class="acf"><span>结尾片段</span>
+            <select id="hlEndMode" class="input">
+              <option value="auto">自动（叙事最后一段）</option>
+              <option value="point">指定高光片段</option>
+              <option value="custom">自定义起止</option>
+            </select></label>
+          <label class="acf"><span>每段去尾帧</span>
+            <select id="hlTail" class="input">
+              <option value="auto">自动识别定帧</option>
+              <option value="fixed">固定 0.5 秒</option>
+              <option value="off">不去</option>
+            </select></label>
+        </div>
+        <select id="hlEndKey" class="input" hidden></select>
+        <div class="row2" id="hlCustom" hidden>
+          <label class="acf"><span>集数</span>
+            <input id="hlEndEp" class="input num" type="number" min="1" step="1" placeholder="第几集"></label>
+          <label class="acf"><span>开始 / 秒</span>
+            <input id="hlEndStart" class="input num" type="number" min="0" step="0.1" placeholder="开始"></label>
+          <label class="acf"><span>结束 / 秒</span>
+            <input id="hlEndEnd" class="input num" type="number" min="0" step="0.1" placeholder="结束"></label>
+        </div>
+        <div class="kv"><span>文件大小上限</span><b>400 MB（自动压低码率）</b></div>
+        <div class="kv"><span>规则</span><b>同集不重叠 · 每段去尾帧 · ≤400MB</b></div>
+        <button type="button" class="btn wide" id="hlPlan">生成高光方案</button>
+        <div class="acfb" id="hlFb" hidden></div>
+        <div class="acmetrics" id="hlMetrics" hidden></div>
+        <div class="aclist" id="hlList"></div>
+        <label class="chk xs" id="hlRelaxRow" hidden title="素材不足时仍按现有高光出片，成片会短于目标时长">
+          <input type="checkbox" id="hlRelax">素材不足也出片</label>
+        <button type="button" class="btn wide primary" id="hlRender" hidden>开始出片（高光剪辑）</button>
       </div>
 
       <div class="cb scroll tabpane" id="panePack" hidden>

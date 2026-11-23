@@ -45,7 +45,8 @@ def _vfilter(w: int, h: int, fit: str) -> str:
 
 
 def _cut(seg: dict, proj: dict, work: Path, i: int, w: int, h: int, fit: str,
-         crf: int, preset: str) -> Path:
+         crf: int, preset: str, vbitrate: int = 0,
+         audio_kbps: int = 128) -> Path:
     ep = proj_mod.ep_by_idx(proj, seg["ep"])
     out = work / f"s{i:03d}.mp4"
     dur = max(0.25, seg["dur"])
@@ -72,27 +73,38 @@ def _cut(seg: dict, proj: dict, work: Path, i: int, w: int, h: int, fit: str,
     else:
         args += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo",
                  "-map", "0:v:0", "-map", "1:a:0"]
+    # 指定 vbitrate 时走 ABR（b:v + maxrate + bufsize），用于按 400MB 上限
+    # 反推码率；否则保持原来的 CRF 恒定质量模式，顺剪 / 自动混剪行为不变。
+    if vbitrate > 0:
+        venc = ["-b:v", f"{vbitrate}k", "-maxrate", f"{vbitrate}k",
+                "-bufsize", f"{vbitrate * 2}k"]
+    else:
+        venc = ["-crf", str(crf)]
     args += [
         "-vf", vf,
         "-af", af,
-        "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-g", str(FPS * 2),
+        "-c:v", "libx264", "-preset", preset, *venc, "-g", str(FPS * 2),
         "-threads", str(RENDER_THREADS), "-filter_threads", str(RENDER_THREADS),
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-c:a", "aac", "-b:a", f"{audio_kbps}k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(out),
     ]
     ffmpegx.run(args, timeout=1800)
     return out
 
 
-def _card_video(png: str, out: Path, dur: float, w: int, h: int, crf: int, preset: str) -> Path:
+def _card_video(png: str, out: Path, dur: float, w: int, h: int, crf: int,
+                preset: str, vbitrate: int = 0,
+                audio_kbps: int = 128) -> Path:
+    venc = (["-b:v", f"{vbitrate}k", "-maxrate", f"{vbitrate}k",
+             "-bufsize", f"{vbitrate * 2}k"] if vbitrate > 0 else ["-crf", str(crf)])
     args = ["-y", "-loop", "1", "-t", f"{dur:.2f}", "-i", png,
             "-f", "lavfi", "-t", f"{dur:.2f}", "-i", "anullsrc=r=48000:cl=stereo",
             "-vf", f"scale={w}:{h},setsar=1,fps={FPS},format=yuv420p",
-            "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-g", str(FPS * 2),
+            "-c:v", "libx264", "-preset", preset, *venc, "-g", str(FPS * 2),
             "-threads", str(RENDER_THREADS), "-filter_threads", str(RENDER_THREADS),
             "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+            "-c:a", "aac", "-b:a", f"{audio_kbps}k", "-ar", "48000", "-ac", "2",
             "-shortest", str(out)]
     ffmpegx.run(args, timeout=600)
     return out
@@ -102,13 +114,15 @@ VID_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".flv", ".ts", ".wm
 
 
 def _end_frame_piece(src: str, out: Path, ef_dur: float, w: int, h: int, fit: str,
-                     crf: int, preset: str) -> tuple[Path, float]:
+                     crf: int, preset: str, vbitrate: int = 0,
+                     audio_kbps: int = 128) -> tuple[Path, float]:
     """引导尾帧：图片 → 静帧按设定秒数；mp4 等视频 → 按原时长原样播放（含自带声音）。"""
     if Path(src).suffix.lower() not in VID_EXTS:
         png3 = out.with_suffix(".png")
         pack.prepare_end_frame(src, png3, w, h)
         dur = max(0.5, ef_dur)
-        return _card_video(str(png3), out, dur, w, h, crf, preset), dur
+        return _card_video(str(png3), out, dur, w, h, crf, preset,
+                           vbitrate, audio_kbps), dur
     try:
         info = ffmpegx.probe(src)
     except Exception as e:  # noqa: BLE001
@@ -120,17 +134,46 @@ def _end_frame_piece(src: str, out: Path, ef_dur: float, w: int, h: int, fit: st
     else:
         args += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo",
                  "-map", "0:v:0", "-map", "1:a:0"]
+    venc = (["-b:v", f"{vbitrate}k", "-maxrate", f"{vbitrate}k",
+             "-bufsize", f"{vbitrate * 2}k"] if vbitrate > 0 else ["-crf", str(crf)])
     args += [
         "-vf", _vfilter(w, h, fit),
         "-af", "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo",
-        "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-g", str(FPS * 2),
+        "-c:v", "libx264", "-preset", preset, *venc, "-g", str(FPS * 2),
         "-threads", str(RENDER_THREADS), "-filter_threads", str(RENDER_THREADS),
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-c:a", "aac", "-b:a", f"{audio_kbps}k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(out),
     ]
     ffmpegx.run(args, timeout=1200)
     return out, dur
+
+
+def _shrink(path: str, vbitrate: int, audio_kbps: int) -> None:
+    """成片超出大小上限时的兜底：按更低码率整体重压一次。
+
+    正常按预算码率编码不会触发；编码器抖动、容器开销超预期时用它兜底，
+    宁可多花一次转码，也不让导出文件突破 400MB。
+    """
+    src = Path(path)
+    tmp = src.with_name(src.stem + "_shrink.mp4")
+    args = ["-y", "-i", str(src), "-map", "0:v:0", "-map", "0:a:0?",
+            "-c:v", "libx264", "-preset", "veryfast",
+            "-b:v", f"{max(250, int(vbitrate))}k",
+            "-maxrate", f"{max(250, int(vbitrate))}k",
+            "-bufsize", f"{max(250, int(vbitrate)) * 2}k",
+            "-g", str(FPS * 2), "-pix_fmt", "yuv420p",
+            "-profile:v", "high", "-level", "4.1",
+            "-c:a", "aac", "-b:a", f"{audio_kbps}k", "-ar", "48000", "-ac", "2",
+            "-movflags", "+faststart", str(tmp)]
+    try:
+        ffmpegx.run(args, timeout=2400)
+        os.replace(tmp, src)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _cleanup_work(work: Path) -> None:
@@ -163,6 +206,12 @@ def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) 
     w, h = pick_size(proj, opts.get("size", "match"), opts.get("fit", "crop"))
     crf = int(opts.get("crf", 20))
     preset = opts.get("preset", "veryfast")
+    # 高光剪辑按 400MB 上限反推的码率走 ABR；顺剪 / 自动混剪不传，仍用 CRF
+    vbitrate = int(opts.get("vbitrate") or 0)
+    # 逐段沿用原来的 128k；最终混流原来是 160k。高光剪辑会显式传 96k。
+    audio_kbps = int(opts.get("audio_kbps") or 128)
+    out_audio_kbps = int(opts.get("audio_kbps") or 160)
+    max_mb = float(opts.get("max_size_mb") or 0)
     logo_path = opts.get("logo") or ""
     overlay_path = opts.get("overlay") or ""
     ov_opacity = float(opts.get("overlay_opacity", 1.0))
@@ -189,7 +238,8 @@ def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) 
 
     def cut_one(item):
         k, s = item
-        return k, _cut(s, proj, work, k, w, h, fit, crf, preset)
+        return k, _cut(s, proj, work, k, w, h, fit, crf, preset,
+                       vbitrate, audio_kbps)
 
     cut_results: dict[int, Path] = {}
     with ThreadPoolExecutor(max_workers=RENDER_CUT_WORKERS) as pool:
@@ -203,7 +253,8 @@ def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) 
 
     if has_end_frame:
         ef_piece, ef_real = _end_frame_piece(end_frame_path, work / "c998.mp4", ef_dur,
-                                             w, h, opts.get("fit", "crop"), crf, preset)
+                                             w, h, opts.get("fit", "crop"), crf, preset,
+                                             vbitrate, audio_kbps)
         pieces.append(ef_piece)
         say(68, "引导尾帧")
 
@@ -255,8 +306,13 @@ def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) 
         layers += 1
     if layers:
         args += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a:0",
-                 "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-                 "-g", str(FPS * 2), "-threads", str(RENDER_THREADS),
+                 "-c:v", "libx264", "-preset", preset]
+        if vbitrate > 0:
+            args += ["-b:v", f"{vbitrate}k", "-maxrate", f"{vbitrate}k",
+                     "-bufsize", f"{vbitrate * 2}k"]
+        else:
+            args += ["-crf", str(crf)]
+        args += ["-g", str(FPS * 2), "-threads", str(RENDER_THREADS),
                  "-filter_threads", str(RENDER_THREADS), "-pix_fmt", "yuv420p",
                  "-profile:v", "high", "-level", "4.1"]
     else:
@@ -264,10 +320,23 @@ def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) 
         # 做 loudnorm。省掉一次全片二次转码，时长/分辨率/帧率不变，还少一次画质损失。
         args += ["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy"]
     args += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-             "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+             "-c:a", "aac", "-b:a", f"{out_audio_kbps}k", "-ar", "48000", "-ac", "2",
              "-movflags", "+faststart", out_path]
     say(78, "叠加模板角标与音量归一")
     ffmpegx.run(args, timeout=2400)
+
+    # 大小硬约束：预算码率通常够，编码器抖动 / 容器开销超预期时再降码率重压
+    size_mb = round(Path(out_path).stat().st_size / 1048576, 2)
+    shrinks = 0
+    while max_mb > 0 and size_mb > max_mb and shrinks < 2 and vbitrate > 0:
+        shrinks += 1
+        vbitrate = max(250, int(vbitrate * (max_mb / size_mb) * 0.94))
+        say(88 + shrinks * 3, f"成片 {size_mb:.0f}MB 超出上限，降码率重压（第 {shrinks} 次）")
+        _shrink(out_path, vbitrate, audio_kbps)
+        size_mb = round(Path(out_path).stat().st_size / 1048576, 2)
+    if max_mb > 0 and size_mb > max_mb:
+        raise RuntimeError(
+            f"成片 {size_mb:.1f}MB 仍超过 {max_mb:.0f}MB 上限，请缩短目标时长再试")
 
     try:
         info = ffmpegx.probe(out_path)
@@ -278,7 +347,11 @@ def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) 
         "video": out_path,
         "duration": round(info["duration"], 2),
         "width": info["width"], "height": info["height"],
-        "size_mb": round(Path(out_path).stat().st_size / 1048576, 1),
+        "size_mb": round(size_mb, 1),
+        "limit_mb": round(max_mb, 1) if max_mb > 0 else None,
+        "within_limit": max_mb <= 0 or size_mb <= max_mb,
+        "bitrate_kbps": vbitrate,
+        "shrinks": shrinks,
         "segments": len(segs),
         "logo": bool(logo_path and Path(logo_path).exists()),
         "overlay": has_overlay, "end_frame": has_end_frame,

@@ -442,3 +442,35 @@ runtime\python.exe tests\test_autocut.py          :: 43 项
 判定标准：`test_hwaccel` 85 项 0 失败（含"硬件失败整体软件重跑""逐条一致"与 P0/P1 修复回归）；
 全量 13 个套件 465 项断言 0 失败；`prof_hwaccel` 中成功后端都产出 1799/8438 条数据，
 失败后端明确标 `ok=false`。本轮结果：13 套件全绿，465/465 通过（修复前 435 项）。
+
+## 十二、高光剪辑（目标时长 + 400MB 上限）
+
+tag `v2026.11.23-highlight`。新增 `engine/hlcut.py`；`tailcard` 支持任意片段末尾检测
+（`measure_at / trim_at`）；`render` 支持按目标大小反推码率（`vbitrate` + `maxrate` /
+`bufsize`）并在超限时自动重压；接口 `POST /api/highlight/plan`、`/api/highlight/render`；
+前端新增「高光」页签。
+
+### 规则与实现
+
+| 规则 | 实现 |
+|---|---|
+| 整剧扫描 | `find_highlights(top_k=400)` 取全剧候选，再按集清洗（每集 ≤4、间隔 ≥6s、不重叠） |
+| 目标时长 / 条数 | 高分优先选片，总时长卡在 95%–102%；`clip_count` 由选片结果决定 |
+| 每段去尾帧 | `tailcard.trim_at` 检测片段 `[end-2.5s, end]` 的末尾定帧；到集末用 `trim_for`（有缓存） |
+| 结尾手动 | `end_mode=point`（候选 key）/ `custom`（集数 + 起止秒），强制片段排最后 |
+| 400MB | `video_kbps = 400×8192/duration − 96k − 48k`；`-b:v/-maxrate/-bufsize`；渲染后仍超限则按比例降码率重压（最多 2 次） |
+
+### 真实数据（40 集 / 73.9 分钟）
+
+目标 600 秒：
+
+- 方案：52 段 / 593.2 秒（fill 0.989），候选池 124 段，尾帧裁掉 2 段共 1.82 秒；
+- 码率：5380 kbps（音频 96k），预计 396.5MB；
+- 实际渲染：594.8 秒 / **394.0MB** / 52 段 / 66.3 秒，`within_limit=true`，未触发重压；
+- 指定结尾：608.7 秒（≤612s 上限）；自定义结尾：第 1 集 60–70 秒准确落在最后一段。
+
+### 回归
+
+新增 `tests/test_hlcut.py` 38 项：选片 / 时长 / 条数、结尾 auto/point/custom、片段尾帧检测
+（运动 / 定帧 / fixed）、码率预算、渲染 4MB 与 2MB 上限及自动重压、接口 400。
+全量 14 个套件 **503 项断言 0 失败**（原 13 套件 465 项）。

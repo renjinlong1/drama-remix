@@ -36,7 +36,7 @@ FADE_MAX = 0.3        # 过渡最多补这么久
 TAIL_GUARD = 0.4      # 末尾至少要有这么长的定帧才算数
 MIN_CARD = 0.45       # 短于这个不裁（避免误伤正常静止镜头）
 MAX_CARD = 4.0        # 卡片长度上限
-VERSION = "v2"
+VERSION = "v3"
 
 _LOCK = threading.Lock()
 _CACHE_PATH = os.path.join("data", "tailcard.json")
@@ -92,19 +92,21 @@ def _frames(path: str, start: float, n: int):
     return np.frombuffer(data, dtype=np.uint8).reshape(-1, h, w).astype(np.int16)
 
 
-def measure_ex(path: str, dur: float) -> tuple[float, str]:
-    """识别这集末尾的片尾卡：返回 (秒数, 置信度)。
+def _measure_until(path: str, end: float, win: float,
+                   exact: bool = False) -> tuple[float, str]:
+    """检测 [end-win, end] 这一段末尾的定帧，返回 (应裁秒数, 置信度)。
 
-    置信度：high（定帧 ≥0.8s）/ mid（0.45~0.8s）/ low（超过 4s 上限或异常）/
-    none（末尾没有定帧，不裁）。
+    `end` 既可以是整集末尾（measure_ex），也可以是高光片段的末尾
+    （measure_at）。`exact=True` 时只抽到 end 之前，避免片段后面的
+    正常运动画面被算进来，把"末尾定帧"误判成"没定帧"。
     """
     import numpy as np
 
-    if not path or not os.path.exists(path) or dur <= 3.0:
+    if not path or not os.path.exists(path) or end <= 1.0:
         return 0.0, "none"
-    win = min(WINDOW, max(2.0, dur * 0.5))
-    n = int(round(win * FPS)) + 2
-    start = max(0.0, dur - win - 0.2)
+    win = max(1.0, min(WINDOW, win))
+    n = int(round(win * FPS)) + (0 if exact else 2)
+    start = max(0.0, end - win - (0.0 if exact else 0.2))
     frames = _frames(path, start, n)
     if frames is None or len(frames) < max(4, int(round(0.6 * FPS))):
         return 0.0, "none"
@@ -122,14 +124,14 @@ def measure_ex(path: str, dur: float) -> tuple[float, str]:
     while i >= 0 and diffs[i] < STILL:
         i -= 1
     still_start = ts[i + 1]
-    still_len = dur - still_start
+    still_len = end - still_start
 
     # 3) 淡入/渐隐过渡最多再补 FADE_MAX（只有帧差 < FADE 才算过渡）
     j, extra = i, 0.0
     while j >= 0 and diffs[j] < FADE and extra + 1.0 / FPS <= FADE_MAX + 1e-9:
         j -= 1
         extra += 1.0 / FPS
-    card = dur - ts[j + 1]
+    card = end - ts[j + 1]
 
     if card < MIN_CARD:
         return 0.0, "none"
@@ -137,6 +139,22 @@ def measure_ex(path: str, dur: float) -> tuple[float, str]:
     if card > MAX_CARD:
         return round(MAX_CARD, 2), "low"
     return round(card, 2), conf
+
+
+def measure_ex(path: str, dur: float) -> tuple[float, str]:
+    """识别这集末尾的片尾卡：返回 (秒数, 置信度)。
+
+    置信度：high（定帧 ≥0.8s）/ mid（0.45~0.8s）/ low（超过 4s 上限或异常）/
+    none（末尾没有定帧，不裁）。
+    """
+    if not path or not os.path.exists(path) or dur <= 3.0:
+        return 0.0, "none"
+    return _measure_until(path, dur, min(WINDOW, max(2.0, dur * 0.5)))
+
+
+def measure_at(path: str, end: float, win: float = 2.5) -> tuple[float, str]:
+    """识别一个片段末尾（end 秒处）的定帧，供高光片段去尾帧用。"""
+    return _measure_until(path, end, win, exact=True)
 
 
 def card_len(path: str, dur: float) -> float:
@@ -171,6 +189,32 @@ def trim_for(path: str, dur: float, mode: str,
         sec, conf = float(c[0]), str(c[1])
     else:
         sec, conf = measure_ex(path, dur)
+        with _LOCK:
+            _load()[k] = [sec, conf]
+            _save()
+    if conf == "none" or sec <= 0:
+        return 0.0, "none"
+    return sec, ("card" if conf != "low" else "card-low")
+
+
+def trim_at(path: str, end: float, mode: str,
+            fixed: float) -> tuple[float, str]:
+    """片段末尾去尾帧：返回 (该切掉的秒数, 依据)。
+
+    end 是片段在集内的结束秒，可以落在集中间（高光片段），
+    也可以正好是集末（此时与 trim_for 的检测结果一致）。
+    """
+    if mode == "off":
+        return 0.0, "off"
+    if mode == "fixed":
+        return round(max(0.0, min(MAX_CARD, float(fixed or 0))), 2), "fixed"
+    k = _key(path, end)
+    with _LOCK:
+        c = _load().get(k)
+    if isinstance(c, list) and len(c) == 2:
+        sec, conf = float(c[0]), str(c[1])
+    else:
+        sec, conf = measure_at(path, end)
         with _LOCK:
             _load()[k] = [sec, conf]
             _save()

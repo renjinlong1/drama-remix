@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 
 from engine import analyze as analyzemod
 from engine import autocut as autocutmod
-from engine import ffmpegx, hwaccel, multimodal as mmmod, naming, ocrsubs, pack
+from engine import ffmpegx, hlcut, hwaccel, multimodal as mmmod, naming, ocrsubs, pack
 from engine import plan as planmod
 from engine import project as projmod
 from engine import render as rendermod
@@ -46,7 +46,7 @@ app.mount("/assets", StaticFiles(directory=str(WEB)), name="assets")
 
 STATE: dict = {"project": None, "analysis": None, "plan": None, "job": None,
                "exports": set(), "forgotten": set(),
-               "multimodal": None, "autoplan": None}
+               "multimodal": None, "autoplan": None, "hlplan": None}
 LOCK = threading.Lock()
 
 # 浏览器预览要直读的本地素材类型（/api/file）
@@ -232,7 +232,7 @@ def scan(body: dict = Body(...)):
     with LOCK:
         STATE["forgotten"].discard(projmod._safe_name(name))
         STATE["multimodal"] = None
-        STATE["autoplan"] = None
+        STATE["autoplan"], STATE["hlplan"] = None, None
     _job_start("scan")
 
     def work():
@@ -431,7 +431,7 @@ def delete_project(body: dict = Body(...)):
             STATE["analysis"] = None
             STATE["plan"] = None
             STATE["multimodal"] = None
-            STATE["autoplan"] = None
+            STATE["autoplan"], STATE["hlplan"] = None, None
     return {"ok": True, "name": name, "folder": folder,
             "current": is_cur, "removed": len(removed)}
 
@@ -452,7 +452,7 @@ def purge_missing():
             STATE["analysis"] = None
             STATE["plan"] = None
             STATE["multimodal"] = None
-            STATE["autoplan"] = None
+            STATE["autoplan"], STATE["hlplan"] = None, None
     return {"ok": True, "removed": gone}
 
 
@@ -476,7 +476,7 @@ def open_project(body: dict = Body(...)):
         STATE["analysis"] = a
         STATE["plan"] = None
         STATE["multimodal"] = None
-        STATE["autoplan"] = None
+        STATE["autoplan"], STATE["hlplan"] = None, None
     _prewarm_thumbs()
     return _proj_payload(p, a)
 
@@ -597,7 +597,7 @@ def _restore_last_project():
         with LOCK:
             if not STATE["project"]:
                 STATE["project"], STATE["analysis"], STATE["plan"] = p, a, None
-                STATE["multimodal"], STATE["autoplan"] = None, None
+                STATE["multimodal"], STATE["autoplan"], STATE["hlplan"] = None, None, None
         _prewarm_thumbs()
         return
 
@@ -902,7 +902,7 @@ def multimodal_scan(body: dict = Body(default={})):
         _job_emit(95, "融合主题 / 场景 / 情绪 / 节奏")
         with LOCK:
             STATE["multimodal"] = fused
-            STATE["autoplan"] = None
+            STATE["autoplan"], STATE["hlplan"] = None, None
         return {"ready": True, "deep": bool(cache), "stats": fused["stats"],
                 "units": len(fused["units"])}
 
@@ -958,6 +958,82 @@ def autocut_render(body: dict = Body(...)):
     def work():
         r = rendermod.render(p, pl, str(out), opts, _job_emit)
         r.update(dir=str(outdir), name=out.name, mode="auto_remix")
+        return r
+
+    _bg(work)
+    return {"ok": True, "out": str(out), "dir": str(outdir)}
+
+
+@app.post("/api/highlight/plan")
+def highlight_plan(body: dict = Body(...)):
+    """高光剪辑：整剧扫描 → 按目标时长选片 → 每段去尾帧 → 生成集锦方案。"""
+    p, a = _cur_project()
+    if not p:
+        raise HTTPException(400, "还没有导入剧集")
+    if not (a and a.get("beats")):
+        raise HTTPException(400, NO_SUB_MSG)
+    try:
+        target = float(body.get("target", 600))
+    except (TypeError, ValueError):
+        target = 600.0
+    if target < 60 or target > 900:
+        raise HTTPException(400, "高光目标时长请填 1-15 分钟")
+    try:
+        r = hlcut.build(
+            p, a["beats"], p.get("acts") or [],
+            target=target,
+            end_mode=str(body.get("end_mode") or "auto"),
+            end_key=str(body.get("end_key") or ""),
+            end_ep=body.get("end_ep"), end_start=body.get("end_start"),
+            end_end=body.get("end_end"),
+            tail_mode=str(body.get("tail_mode") or "auto"),
+            tail_fixed=float(body.get("tail_fixed", 0.5) or 0.5),
+            max_size_mb=float(body.get("max_size_mb", 400) or 400),
+            relax=bool(body.get("relax", False)))
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, f"高光方案参数不对：{e}") from None
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)) from None
+    with LOCK:
+        STATE["hlplan"] = r.get("plan")
+    return r
+
+
+@app.post("/api/highlight/render")
+def highlight_render(body: dict = Body(...)):
+    """渲染高光集锦；码率由 400MB 上限反推，超限会自动重压。"""
+    p, _a = _cur_project()
+    with LOCK:
+        pl = STATE.get("hlplan")
+    if not p:
+        raise HTTPException(400, "还没有导入剧集")
+    if not pl:
+        raise HTTPException(400, "先生成高光剪辑方案")
+    if not pl.get("complete") and not bool(body.get("relax", False)):
+        raise HTTPException(400, "素材不足，成片会明显短于目标时长；"
+                                 "请降低目标时长，或勾选「放宽限制」")
+    title = (body.get("title") or (p["name"] + "_高光")).strip()
+    safe = _safe_name(title)
+    tpl = _name_tpl(body)
+    outdir = _out_dir(body, safe)
+    if tpl:
+        out = naming.Namer(outdir, tpl).next()
+    else:
+        out = outdir / f"{safe}.mp4"
+        if out.exists():
+            out = outdir / f"{safe}_{random.randint(1, 999)}.mp4"
+    opts = _pack_opts(body, title)
+    bit = pl.get("bitrate") or {}
+    opts.update({
+        "vbitrate": int(bit.get("video_kbps") or 0),
+        "audio_kbps": int(bit.get("audio_kbps") or 96),
+        "max_size_mb": float(bit.get("max_size_mb") or 400),
+    })
+    _job_start("highlight")
+
+    def work():
+        r = rendermod.render(p, pl, str(out), opts, _job_emit)
+        r.update(dir=str(outdir), name=out.name, mode="highlight_cut")
         return r
 
     _bg(work)

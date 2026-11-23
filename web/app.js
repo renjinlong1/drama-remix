@@ -1,7 +1,7 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-23.2';
+window.__APP_BUILD__ = '2026-11-23.3';
 
 /* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
    以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
@@ -33,6 +33,7 @@ const S = {
   scanPending: false,
   hookMeta: {},
   auto: { deep: false, plan: null, topics: [], stats: null },
+  hl: { plan: null, target: 600, endMode: 'auto', endKey: '', tail: 'auto' },
   target: 360, lead: 1, tailMode: 'auto', tailFixed: 2, efVideoDur: 0, jobTimer: null, saveTimer: null,
 };
 
@@ -201,8 +202,10 @@ function applyProject(d) {
     else toast('这 ' + d.ocr.eps + ' 集画面里没识别到字幕', true);
   }
   S.ready = true;
-  // 换项目：旧的识别结果与混剪方案都不能继承
+  // 换项目：旧的识别结果与混剪 / 高光方案都不能继承
   S.auto = { deep: false, plan: null, topics: [], stats: null };
+  S.hl.plan = null;
+  renderHl(null);
   $('#acFb').hidden = true; $('#acMetrics').hidden = true;
   $('#acList').innerHTML = ''; $('#acRender').hidden = true;
   loadAutoState();
@@ -2990,7 +2993,7 @@ $('#btnClearHook').onclick = () => {
 
 /* 右栏参数区页签：顺剪设置 / 开头钩子 / 包装（同一张卡内切换，避免挤成一条缝） */
 const RTAB_HINT = { plan: '', hook: '选一个当开头', pack: '角标 / 尾帧 / 模板',
-  auto: '主题 / 时长 / 节奏' };
+  auto: '主题 / 时长 / 节奏', hl: '整剧高光 / 时长 / 结尾' };
 function setRTab(t, save) {
   if (!Object.prototype.hasOwnProperty.call(RTAB_HINT, t)) t = 'plan';
   $$('#rTabs .rtab').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
@@ -3017,9 +3020,147 @@ function syncTabDots() {
   }
   const autoTab = $('#rTabs .rtab[data-t="auto"]');
   if (autoTab) autoTab.classList.toggle('dot', !!S.auto.plan);
+  const hlTab = $('#rTabs .rtab[data-t="hl"]');
+  if (hlTab) hlTab.classList.toggle('dot', !!(S.hl && S.hl.plan));
 }
 $$('#rTabs .rtab').forEach((b) => { b.onclick = () => setRTab(b.dataset.t); });
 syncTabDots();
+
+/* ── 高光剪辑：整剧扫描 → 按目标时长选条数 → 每段去尾帧 ── */
+function hlBody() {
+  const body = {
+    target: Number($('#hlTarget').value) || 600,
+    end_mode: $('#hlEndMode').value,
+    end_key: $('#hlEndKey').value || '',
+    tail_mode: $('#hlTail').value,
+    tail_fixed: 0.5,
+    max_size_mb: 400,
+    relax: $('#hlRelax').checked,
+  };
+  if (body.end_mode === 'custom') {
+    body.end_ep = Number($('#hlEndEp').value) || 0;
+    body.end_start = Number($('#hlEndStart').value) || 0;
+    body.end_end = Number($('#hlEndEnd').value) || 0;
+  }
+  return body;
+}
+
+function renderHl(r) {
+  const fb = $('#hlFb'), mt = $('#hlMetrics'), list = $('#hlList');
+  const f = (r && r.feedback) || {};
+  if (r && f.title) {
+    fb.hidden = false;
+    fb.className = 'acfb ' + (f.level || '');
+    fb.innerHTML = '<b>' + esc(f.title) + '</b><div>' + esc(f.msg || '') + '</div>' +
+      ((f.hints || []).length
+        ? '<ul>' + f.hints.map((h) => '<li>' + esc(h) + '</li>').join('') + '</ul>' : '');
+  } else {
+    fb.hidden = true;
+  }
+  const p = (r && r.plan) || null;
+  if (!p) {
+    mt.hidden = true; list.innerHTML = '';
+    $('#hlRender').hidden = true; $('#hlRelaxRow').hidden = true;
+    return;
+  }
+  const bit = p.bitrate || {};
+  mt.hidden = false;
+  mt.innerHTML = [
+    ['片段', p.clip_count + ' 段'],
+    ['时长', fmt(p.estimated) + ' / ' + fmt(p.target)],
+    ['填充', Math.round((p.fill || 0) * 100) + '%'],
+    ['尾帧', Number(p.tail_total || 0).toFixed(1) + ' 秒'],
+    ['码率', (bit.video_kbps || 0) + ' kbps'],
+    ['预计', (bit.estimated_mb || 0) + ' MB'],
+  ].map(([k, v]) => '<i>' + esc(k) + ' <b>' + esc(v) + '</b></i>').join('');
+  list.innerHTML = (p.segments || []).map((s) => {
+    const tail = s.tail_trim ? ' · 尾帧 -' + Number(s.tail_trim).toFixed(1) + 's' : '';
+    return '<div class="hlitem"><b>第' + s.ep + '集</b><span>' +
+      fmt(s.start) + '–' + fmt(s.end) + ' · ' + Number(s.dur).toFixed(1) + 's' + tail +
+      (s.end_clip ? ' · 结尾' : '') + '</span>' +
+      '<span class="sp">' + esc(String(s.text || '').slice(0, 34)) + '</span></div>';
+  }).join('');
+  const sel = $('#hlEndKey');
+  const opts = r.end_options || p.end_options || [];
+  sel.innerHTML = '<option value="">（自动选最后一段）</option>' + opts.map((o) =>
+    '<option value="' + esc(o.key) + '">第' + o.ep + '集 ' + fmt(o.start) + ' · ' +
+    Number(o.dur).toFixed(1) + 's</option>').join('');
+  if (S.hl.endKey) sel.value = S.hl.endKey;
+  $('#hlRender').hidden = !(p.segments && p.segments.length);
+  $('#hlRelaxRow').hidden = !!p.complete;
+}
+
+$('#hlTarget').oninput = () => {
+  const sec = Number($('#hlTarget').value) || 600;
+  $('#hlTgVal').textContent = (sec / 60).toFixed(1) + ' 分钟';
+  S.hl.target = sec;
+};
+$$('.hltargets [data-hlmin]').forEach((b) => {
+  b.onclick = () => {
+    $('#hlTarget').value = b.dataset.hlmin;
+    $('#hlTarget').dispatchEvent(new Event('input'));
+  };
+});
+$('#hlEndMode').onchange = () => {
+  const m = $('#hlEndMode').value;
+  $('#hlEndKey').hidden = m !== 'point';
+  $('#hlCustom').hidden = m !== 'custom';
+  S.hl.endMode = m;
+};
+$('#hlEndKey').onchange = () => { S.hl.endKey = $('#hlEndKey').value; };
+$('#hlTail').onchange = () => { S.hl.tail = $('#hlTail').value; };
+
+$('#hlPlan').onclick = async () => {
+  if (!S.ready) { toast('先导入剧集', true); return; }
+  const btn = $('#hlPlan');
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '扫描整剧高光…';
+  try {
+    const r = await api('/api/highlight/plan', hlBody());
+    S.hl.plan = r.plan || null;
+    renderHl(r);
+    if (r.feedback) toast(r.feedback.title || '高光方案已生成', r.feedback.level === 'error');
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+};
+
+$('#hlRender').onclick = async () => {
+  if (!S.hl.plan) { toast('先生成高光方案', true); return; }
+  const btn = $('#hlRender');
+  btn.disabled = true;
+  const base = Object.assign(packOpts(), {
+    title: (($('#title').value || S.name || '高光') + '_高光').trim(),
+    logo: S.logo, logo_pos: $('#logoPos').value,
+    outdir: S.outdir, outdir_sub: !$('#bFlat').checked,
+    name_tpl: String(S.nameTpl || '').trim(),
+    relax: $('#hlRelax').checked,
+  });
+  try {
+    await apiStart('/api/highlight/render', base, '高光出片');
+    watchJob((res) => {
+      btn.disabled = false;
+      if (!res) return;
+      $('#out').innerHTML =
+        '<video src="/api/video?path=' + encodeURIComponent(res.video) + '" controls></video>' +
+        '<div class="oi"><span>' + (res.name ? esc(res.name) + ' · ' : '') +
+          fmt(res.duration) + ' · ' + res.width + '×' + res.height +
+          ' · ' + (res.segments || 0) + ' 段</span><span>' + res.size_mb + ' MB' +
+          (res.limit_mb ? ' / ' + res.limit_mb + ' MB' : '') + '</span></div>';
+      if (res.dir) showOutDir(res.dir);
+      $('#btnShowOut').hidden = false;
+      $('#btnShowOut').textContent = '查看成片';
+      toast('高光成片完成：' + fmt(res.duration) + ' · ' + res.size_mb + ' MB');
+    });
+  } catch (e) {
+    btn.disabled = false;
+    toast(e.message, true);
+  }
+};
 try { setRTab(localStorage.getItem('dc.rTab') || 'plan', false); } catch (e) { setRTab('plan', false); }
 
 $('#btnHookPrefs').onclick = openHookPrefs;
