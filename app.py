@@ -49,6 +49,28 @@ STATE: dict = {"project": None, "analysis": None, "plan": None, "job": None,
                "multimodal": None, "autoplan": None, "hlplan": None}
 LOCK = threading.Lock()
 
+# 导入两段式：动作扫描是整集解码，几十集要几十秒到几分钟。
+# 待扫集数超过这个阈值时，先把时间轴 / 钩子交给界面，动作扫描转后台补。
+ACTS_DEFER_AFTER = max(1, int(os.environ.get("DC_ACTS_DEFER") or 8))
+SCAN_ACTS_MODES = ("auto", "defer", "sync")
+
+
+def _acts_decision(pending: int, mode: str) -> tuple[bool, str]:
+    """返回 (是否延后到后台, 本次动作扫描状态)。
+
+    - cached：没有待扫集数，直接用缓存
+    - inline：本次同步扫完（auto 且待扫不超过阈值，或调用方强制 sync）
+    - deferred：先出时间轴，前端接着调 /api/acts 补扫
+    """
+    if pending <= 0:
+        return False, "cached"
+    if mode == "sync":
+        return False, "inline"
+    if mode == "defer":
+        return True, "deferred"
+    return (pending > ACTS_DEFER_AFTER), (
+        "deferred" if pending > ACTS_DEFER_AFTER else "inline")
+
 # 浏览器预览要直读的本地素材类型（/api/file）
 MEDIA_TYPES = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -74,22 +96,26 @@ def _job_start(kind: str):
         if STATE["job"] and STATE["job"]["state"] == "running":
             raise HTTPException(409, "有任务正在跑，等它完成")
         STATE["job"] = {"kind": kind, "state": "running", "progress": 0,
-                        "msg": "准备中", "result": None, "t0": time.time()}
+                        "phase": "queued", "msg": "准备中", "result": None,
+                        "t0": time.time()}
 
 
-def _job_emit(pct: float, msg: str):
+def _job_emit(pct: float, msg: str, phase: str = ""):
     if STATE["job"]:
         STATE["job"]["progress"] = round(max(0, min(100, pct)), 1)
         STATE["job"]["msg"] = msg
+        if phase:
+            STATE["job"]["phase"] = phase
 
 
 def _job_done(result=None, err: str | None = None):
     if not STATE["job"]:
         return
     if err:
-        STATE["job"].update(state="error", msg=err, progress=100)
+        STATE["job"].update(state="error", msg=err, progress=100, phase="error")
     else:
-        STATE["job"].update(state="done", progress=100, msg="完成", result=result)
+        STATE["job"].update(state="done", progress=100, msg="完成", phase="done",
+                            result=result)
 
 
 def _bg(fn, *a, **kw):
@@ -223,10 +249,21 @@ def _check_scan_folder(folder: str) -> None:
 
 @app.post("/api/scan")
 def scan(body: dict = Body(...)):
+    """两段式导入。
+
+    第一段（本接口）：分集 + 字幕配对 / OCR + 动作缓存清点 + 剧情分析，
+    动作扫描要解码整集，待扫超过阈值时**延后**，先把时间轴和钩子交给界面；
+    第二段（前端随后调 `/api/acts`，force=false）：只补没扫过 / 上次失败的集。
+
+    请求体 acts: auto（默认，按阈值决定）/ defer（有活就延后）/ sync（一定扫完）。
+    """
     # 从资源管理器粘过来的路径常带引号 / 全角空格，先统一规范化
     folder = (body.get("folder") or "").strip().strip('"').strip("'").replace("\u3000", " ").strip()
     name = (body.get("name") or "").strip()
     use_ocr = bool(body.get("ocr", True))
+    acts_mode = str(body.get("acts") or "auto").strip().lower()
+    if acts_mode not in SCAN_ACTS_MODES:
+        raise HTTPException(400, f"不支持的动作扫描模式：{acts_mode}（可选 auto / defer / sync）")
     name, notice = _resolve_proj_name(name, folder)
     # 同名剧刚从「最近项目」删掉又重新导入：撤销墓碑，允许它作为新项目落盘
     with LOCK:
@@ -237,40 +274,74 @@ def scan(body: dict = Body(...)):
 
     def work():
         _check_scan_folder(folder)
-        _job_emit(2, "扫描剧集与字幕")
+        _job_emit(2, "扫描剧集与字幕", "index")
         p = projmod.scan(folder, name)
         # 钩子池的随机种子：换台电脑 / 重新导入同一部剧，高光开头不会一模一样
         p["hook_seed"] = random.randint(1, 2 ** 31 - 1)
         # 没有字幕文件的集：从画面里的硬字幕识别台词
         if use_ocr and p["sub_episodes"] < len(p["episodes"]):
             def ocr_progress(pct, msg):
-                _job_emit(5 + pct * 0.85, "OCR · " + msg)
+                _job_emit(5 + pct * 0.85, "OCR · " + msg, "ocr")
             try:
                 r = projmod.apply_ocr(p, progress=ocr_progress)
                 if r["eps"]:
                     print(f"[ocr] {r['eps']} 集，{r['cues']} 句台词，用时 {r['secs']}s", flush=True)
             except Exception as e:  # noqa: BLE001
                 print(f"[ocr] 跳过：{e}", flush=True)
-        _job_emit(86, "扫描画面冲突（打人 / 砸东西 / 情绪爆发）")
-        try:
-            v = vision.scan_project(
-                p, ROOT,
-                progress=lambda pct, msg: _job_emit(86 + pct * 0.08, msg))
-            p["acts"] = v["events"]
-            print(f"[acts] {len(v['events'])} 个动作点 / {v['eps']} 集", flush=True)
-            if v.get("failed"):
-                print(f"[acts] {len(v['failed'])} 集扫描失败，已跳过："
-                      + " / ".join(f"第{x['ep']}集" for x in v["failed"][:5]), flush=True)
-        except Exception as e:  # noqa: BLE001
-            p["acts"] = []
-            print(f"[acts] 跳过：{e}", flush=True)
+
+        # ── 动作扫描：先清点缓存，再决定同步还是延后 ──
+        _job_emit(86, "清点动作缓存", "acts")
+        pending_before = vision.pending(p, ROOT)
+        defer, acts_state = _acts_decision(pending_before, acts_mode)
+        acts_info = {"mode": acts_state, "deferred": defer,
+                     "pending_before": pending_before, "pending_after": pending_before,
+                     "scanned": 0, "events": 0, "failed": 0,
+                     "cache_hit": max(0, len(p["episodes"]) - pending_before),
+                     "threshold": ACTS_DEFER_AFTER, "error": ""}
+        if defer:
+            # 时间轴先出：老缓存已经扫过的集立刻可用，没扫的等后台补
+            p["acts"] = vision.cached_events(p, ROOT)
+            acts_info["events"] = len(p["acts"])
+            _job_emit(89, f"时间轴先出，{pending_before} 集画面动作转后台补扫", "acts")
+            print(f"[acts] 延后：待扫 {pending_before} 集 > 阈值 {ACTS_DEFER_AFTER}", flush=True)
+        elif pending_before <= 0:
+            p["acts"] = vision.cached_events(p, ROOT)
+            acts_info["events"] = len(p["acts"])
+            print(f"[acts] 缓存命中：{len(p['acts'])} 个动作点", flush=True)
+        else:
+            _job_emit(86, "扫描画面冲突（打人 / 砸东西 / 情绪爆发）", "acts")
+            try:
+                v = vision.scan_project(
+                    p, ROOT,
+                    progress=lambda pct, msg: _job_emit(86 + pct * 0.08, msg, "acts"),
+                    should_stop=lambda: projmod._safe_name(p["name"]) in STATE["forgotten"])
+                p["acts"] = v["events"]
+                acts_info.update(scanned=v.get("scanned", 0),
+                                 pending_after=v.get("pending", 0),
+                                 events=len(v["events"]),
+                                 failed=len(v.get("failed") or []),
+                                 cache_hit=v.get("cache_hit", 0),
+                                 error=v.get("cache_error") or "")
+                print(f"[acts] {len(v['events'])} 个动作点 / {v['eps']} 集"
+                      f"（本次扫 {v.get('scanned', 0)} 集，缓存命中 {v.get('cache_hit', 0)}）",
+                      flush=True)
+                if v.get("failed"):
+                    print(f"[acts] {len(v['failed'])} 集扫描失败，已跳过："
+                          + " / ".join(f"第{x['ep']}集" for x in v["failed"][:5]), flush=True)
+            except Exception as e:  # noqa: BLE001
+                # 扫描失败别把上一份动作点清空：钩子至少还能按旧数据排序
+                p["acts"] = vision.cached_events(p, ROOT)
+                acts_info.update(mode="failed", error=str(e)[:200],
+                                 events=len(p["acts"]))
+                print(f"[acts] 跳过：{e}", flush=True)
+
         # 删除「最近项目」时可能正有这次扫描在跑：别让它把刚清掉的项目再写回来
         with LOCK:
             dropped = projmod._safe_name(p["name"]) in STATE["forgotten"]
         if dropped:
             return None     # 前端 onDone 收到空结果，只刷新列表、不把旧剧画回界面
         projmod.save(p)
-        _job_emit(95, "分析剧情")
+        _job_emit(95, "分析剧情", "analyze")
         a = analyzemod.analyze(p)
         with LOCK:
             if projmod._safe_name(p["name"]) in STATE["forgotten"]:
@@ -278,14 +349,20 @@ def scan(body: dict = Body(...)):
             STATE["project"] = p
             STATE["analysis"] = a
             STATE["plan"] = None
+        acts_info["pending_after"] = vision.pending(p, ROOT)
         out = _proj_payload(p, a)
+        out["acts_info"] = acts_info
+        out["acts_mode"] = acts_state
+        out["pending_acts"] = acts_info["pending_after"]
         if notice:
             out["notice"] = notice
         # 分析已经完成，趁用户在看界面时把候选缩略图焐热
         _prewarm_thumbs()
         return out
     _bg(work)
-    return {"ok": True, "name": name, "notice": notice}
+    return {"ok": True, "name": name, "notice": notice,
+            "acts": acts_mode, "defer_threshold": ACTS_DEFER_AFTER,
+            "phases": ["index", "ocr", "acts", "analyze"]}
 
 
 def _resolve_proj_name(name: str, folder: str) -> tuple[str, str]:
@@ -360,35 +437,53 @@ def run_ocr(body: dict = Body(default={})):
 
 @app.post("/api/acts")
 def scan_acts(body: dict = Body(default={})):
-    """重扫画面冲突点（扇巴掌 / 砸东西 / 情绪爆发）。
+    """补扫画面冲突点（扇巴掌 / 砸东西 / 情绪爆发）。
 
     台词分只能看见"说了什么"，动手的镜头往往一句台词都没有，靠这一步补上。
+    `force=false`（默认）只补动作缓存里缺的 / 上次失败的集，重复调用是幂等的；
+    用户主动「重新扫描」时传 `force=true` 才会整剧重扫。
     """
     with LOCK:
         p = STATE["project"]
     if not p:
         raise HTTPException(400, "还没有导入剧集")
-    force = bool(body.get("force", True))
+    body = body or {}
+    force = bool(body.get("force", False))
     _job_start("acts")
 
     def work():
+        before = vision.pending(p, ROOT)
+        _job_emit(2, f"动作扫描：{before} 集待补", "acts")
         v = vision.scan_project(
             p, ROOT, force=force,
-            progress=lambda pct, msg: _job_emit(pct * 0.9, msg))
+            progress=lambda pct, msg: _job_emit(pct * 0.9, msg, "acts"),
+            should_stop=lambda: projmod._safe_name(p["name"]) in STATE["forgotten"])
+        if v.get("aborted"):
+            return None
         p["acts"] = v["events"]
         projmod.save(p)
-        _job_emit(94, "重新分析剧情")
+        _job_emit(94, "重新分析剧情", "analyze")
         a = analyzemod.analyze(p)
         with LOCK:
+            if STATE["project"] is not p:
+                return None
             STATE["analysis"] = a
             STATE["plan"] = None
         out = _proj_payload(p, a)
-        out["acts_info"] = {"events": len(v["events"]), "eps": v["eps"],
-                            "scanned": v["scanned"],
-                            "failed": len(v.get("failed") or [])}
+        out["acts_info"] = {
+            "mode": "inline", "deferred": False,
+            "pending_before": before, "pending_after": v.get("pending", 0),
+            "scanned": v.get("scanned", 0), "events": len(v["events"]),
+            "failed": len(v.get("failed") or []),
+            "cache_hit": v.get("cache_hit", 0),
+            "cache_key": v.get("cache_key", ""),
+            "cache_file": v.get("cache_file", ""),
+            "error": v.get("cache_error") or ""}
+        out["pending_acts"] = v.get("pending", 0)
+        out["acts_mode"] = "inline"
         return out
     _bg(work)
-    return {"ok": True}
+    return {"ok": True, "force": force, "phases": ["acts", "analyze"]}
 
 
 @app.post("/api/project/delete")
@@ -421,11 +516,14 @@ def delete_project(body: dict = Body(...)):
             folder = str(projmod.load(target).get("folder") or "")
     except Exception:  # noqa: BLE001
         pass
-    removed = projmod.forget(name)        # 存档 + .bak + 动作缓存 + 失效 recent 缓存
+    # 先立墓碑再删：后台扫描每完成一集都会检查这个集合，
+    # 避免「删缓存 → 扫描又写回 → 删除完成」的竞态留下一份幽灵缓存。
+    with LOCK:
+        STATE["forgotten"].add(name)
+    removed = projmod.forget(name, folder)   # 存档 + .bak + 动作缓存 + 失效 recent 缓存
     with LOCK:
         cur = STATE["project"]
         is_cur = bool(cur) and projmod._safe_name(cur.get("name") or "") == name
-        STATE["forgotten"].add(name)      # 后台扫描收尾时不要再写回来
         if is_cur:
             STATE["project"] = None
             STATE["analysis"] = None
@@ -442,10 +540,11 @@ def purge_missing():
     gone = projmod.purge_missing()
     drop = {projmod._safe_name(x) for x in gone}
     with LOCK:
-        # 顺带清掉这些项目的 .json.bak / 动作缓存，和单条删除保持一致
-        for nm in drop:
-            projmod.forget(nm)
-            STATE["forgotten"].add(nm)
+        # 先立墓碑，避免后台扫描在清理过程中把动作缓存写回来
+        STATE["forgotten"].update(drop)
+    for nm in drop:
+        projmod.forget(nm)
+    with LOCK:
         cur = STATE["project"]
         if cur and projmod._safe_name(cur.get("name") or "") in drop:
             STATE["project"] = None
@@ -462,14 +561,25 @@ def open_project(body: dict = Body(...)):
     if not Path(path).exists():
         raise HTTPException(404, "项目文件不存在")
     p = projmod.load(path)
-    if "acts" not in p:      # 老项目没扫过动作点；空列表也算扫过，避免每次打开都重跑
+    # 打开旧项目也走同一套判断：待补集数多就先出界面，前端随后 /api/acts 补扫；
+    # 只差几集时同步补完，用户不必再等第二轮。
+    pending = vision.pending(p, ROOT)
+    defer, mode = _acts_decision(pending, "auto")
+    changed = False
+    if defer:
+        p["acts"] = vision.cached_events(p, ROOT)
+    elif pending:
         try:
-            v = vision.scan_project(p, ROOT)     # 命中缓存时几乎不耗时
-            if v["events"]:
-                p["acts"] = v["events"]
-                projmod.save(p)
-        except Exception:  # noqa: BLE001
-            pass
+            v = vision.scan_project(p, ROOT, should_stop=lambda: False)
+            p["acts"] = v["events"]
+            changed = True
+        except Exception:  # noqa: BLE001 打不开缓存也能先用旧动作点
+            p.setdefault("acts", [])
+    else:
+        # 缓存是唯一事实来源：项目里存的 acts 可能来自上一次缓存 / 旧版本
+        p["acts"] = vision.cached_events(p, ROOT)
+    if changed:
+        projmod.save(p)
     a = analyzemod.analyze(p)
     with LOCK:
         STATE["project"] = p
@@ -478,7 +588,10 @@ def open_project(body: dict = Body(...)):
         STATE["multimodal"] = None
         STATE["autoplan"], STATE["hlplan"] = None, None
     _prewarm_thumbs()
-    return _proj_payload(p, a)
+    out = _proj_payload(p, a)
+    out["pending_acts"] = vision.pending(p, ROOT)
+    out["acts_mode"] = mode
+    return out
 
 
 def _proj_payload(p: dict, a: dict) -> dict:
@@ -497,6 +610,7 @@ def _proj_payload(p: dict, a: dict) -> dict:
         "hook_limit": p.get("hook_limit", 100),
         "hook_meta": a.get("hook_meta") or {},
         "acts": a.get("acts", 0),
+        "pending_acts": vision.pending(p, ROOT),
         "endings": a.get("endings", []),
     }
 

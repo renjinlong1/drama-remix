@@ -1,0 +1,348 @@
+{
+  "when": "2026-11-23 15:00:58",
+  "secs": 1.79,
+  "total": 68,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "同一文件夹改剧名仍是同一个键",
+      "ok": true,
+      "detail": "('剧A~632e26f1', '剧A~632e26f1')"
+    },
+    {
+      "name": "不同目录的同名文件夹键不同",
+      "ok": true,
+      "detail": "('剧A~632e26f1', '剧A~66562c04')"
+    },
+    {
+      "name": "键里带文件夹名，便于排查",
+      "ok": true,
+      "detail": "剧A~632e26f1"
+    },
+    {
+      "name": "路径哈希长度固定为 8",
+      "ok": true,
+      "detail": "剧A~632e26f1"
+    },
+    {
+      "name": "没有文件夹时退回剧名（老项目兼容）",
+      "ok": true,
+      "detail": "没有目录"
+    },
+    {
+      "name": "缓存落在 data/act",
+      "ok": true,
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_scan_phases\\data\\act\\剧A~632e26f1.json"
+    },
+    {
+      "name": "缓存文件名可安全落盘",
+      "ok": true,
+      "detail": "剧A~632e26f1.json"
+    },
+    {
+      "name": "首次全部扫描",
+      "ok": true,
+      "detail": "(3, 3)"
+    },
+    {
+      "name": "首次无缓存命中",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "name": "改剧名仍命中同一份缓存",
+      "ok": true,
+      "detail": "(0, 0)"
+    },
+    {
+      "name": "命中后事件完全一致",
+      "ok": true,
+      "detail": "3"
+    },
+    {
+      "name": "缓存命中数正确",
+      "ok": true,
+      "detail": "3"
+    },
+    {
+      "name": "不同目录同名文件夹不串数据",
+      "ok": true,
+      "detail": "(3, 3)"
+    },
+    {
+      "name": "两份缓存文件并存",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "坏缓存当未命中并重建",
+      "ok": true,
+      "detail": "(3, 3)"
+    },
+    {
+      "name": "folder 对不上时拒绝复用",
+      "ok": true,
+      "detail": "(3, 3)"
+    },
+    {
+      "name": "老缓存被识别并迁移",
+      "ok": true,
+      "detail": "(0, 2)"
+    },
+    {
+      "name": "迁移后写新键、清老文件",
+      "ok": true,
+      "detail": "('剧~0d61033b.json', False)"
+    },
+    {
+      "name": "对不上的老缓存不迁移",
+      "ok": true,
+      "detail": "(2, 2)"
+    },
+    {
+      "name": "失败集被记录",
+      "ok": true,
+      "detail": "[{'ep': 2, 'msg': '模拟第 2 集坏文件'}]"
+    },
+    {
+      "name": "其余集正常产出",
+      "ok": true,
+      "detail": "3"
+    },
+    {
+      "name": "失败集仍算待扫",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "第二次只重试失败集",
+      "ok": true,
+      "detail": "(1, 1)"
+    },
+    {
+      "name": "重试成功后全量事件齐全",
+      "ok": true,
+      "detail": "(4, 0)"
+    },
+    {
+      "name": "换片源只重扫这一集",
+      "ok": true,
+      "detail": "(1, 1)"
+    },
+    {
+      "name": "force 才整剧重扫",
+      "ok": true,
+      "detail": "(4, 4)"
+    },
+    {
+      "name": "并发调用只解码一批",
+      "ok": true,
+      "detail": "6"
+    },
+    {
+      "name": "并发度达到 6 路（请求 6 集 / 上限 8）",
+      "ok": true,
+      "detail": "6"
+    },
+    {
+      "name": "先到者扫全、后到者命中",
+      "ok": true,
+      "detail": "(6, 0)"
+    },
+    {
+      "name": "两个调用返回同一份结果",
+      "ok": true,
+      "detail": "6"
+    },
+    {
+      "name": "顺序重复请求幂等",
+      "ok": true,
+      "detail": "(0, 0)"
+    },
+    {
+      "name": "显式 force 才重新解码",
+      "ok": true,
+      "detail": "(6, 6)"
+    },
+    {
+      "name": "should_stop 立即中止",
+      "ok": true,
+      "detail": "True"
+    },
+    {
+      "name": "中止后不留下缓存",
+      "ok": true,
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_scan_phases\\d\\data\\act\\剧~d07c04c9.json"
+    },
+    {
+      "name": "16 核 → 8 路",
+      "ok": true,
+      "detail": "8"
+    },
+    {
+      "name": "4 核 → 2 路（不硬上 8 路）",
+      "ok": true,
+      "detail": "2"
+    },
+    {
+      "name": "再多的核也不超过 8 路",
+      "ok": true,
+      "detail": "8"
+    },
+    {
+      "name": "待扫集数少于并发时按集数收",
+      "ok": true,
+      "detail": "3"
+    },
+    {
+      "name": "没有待扫时至少 1 路",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "DC_ACT_WORKERS 可覆盖",
+      "ok": true,
+      "detail": "5"
+    },
+    {
+      "name": "环境变量也会被 8 路上限截断",
+      "ok": true,
+      "detail": "8"
+    },
+    {
+      "name": "DC_ACT_THREADS 可覆盖",
+      "ok": true,
+      "detail": "3"
+    },
+    {
+      "name": "8 路 × 2 线程",
+      "ok": true,
+      "detail": "2"
+    },
+    {
+      "name": "状态带批量抓取建议",
+      "ok": true,
+      "detail": "{'hardware': False, 'backend': '', 'reason': '软件解码'}"
+    },
+    {
+      "name": "auto 0 集 → cached",
+      "ok": true,
+      "detail": "(False, 'cached')"
+    },
+    {
+      "name": "auto 8 集 → 同步",
+      "ok": true,
+      "detail": "(False, 'inline')"
+    },
+    {
+      "name": "auto 9 集 → 延后",
+      "ok": true,
+      "detail": "(True, 'deferred')"
+    },
+    {
+      "name": "defer 模式有活就延后",
+      "ok": true,
+      "detail": "(True, 'deferred')"
+    },
+    {
+      "name": "sync 模式一定同步",
+      "ok": true,
+      "detail": "(False, 'inline')"
+    },
+    {
+      "name": "非法 acts 模式返回 400",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "任务起始阶段 queued",
+      "ok": true,
+      "detail": "{'kind': 'scan', 'state': 'running', 'progress': 0, 'phase': 'queued', 'msg': '准备中', 'result': None, 't0': 1795417258.0116887}"
+    },
+    {
+      "name": "阶段可切到 acts",
+      "ok": true,
+      "detail": "{'kind': 'scan', 'state': 'running', 'progress': 50, 'phase': 'acts', 'msg': 'x', 'result': None, 't0': 1795417258.0116887}"
+    },
+    {
+      "name": "完成后阶段 done",
+      "ok": true,
+      "detail": "{'kind': 'scan', 'state': 'done', 'progress': 100, 'phase': 'done', 'msg': '完成', 'result': {'ok': True}, 't0': 1795417258.0116887}"
+    },
+    {
+      "name": "第一段正常完成",
+      "ok": true,
+      "detail": "{'kind': 'scan', 'state': 'done', 'progress': 100, 'phase': 'done', 'msg': '完成', 'result': {'name': '__scan_phase__', 'folder': 'C:\\\\Users\\\\ADMINI~1\\\\AppData\\\\Local\\\\Temp\\\\dc_scan_phases\\\\f\\\\剧', 'total': 100.0, 'eps': [{'idx': 1, 'file': '01.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 0.0, 'sub_source': ''}, {'idx': 2, 'file': '02.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 10.0, 'sub_source': ''}, {'idx': 3, 'file': '03.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 20.0, 'sub_source': ''}, {'idx': 4, 'file': '04.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 30.0, 'sub_source': ''}, {'idx': 5, 'file': '05.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 40.0, 'sub_source': ''}, {'idx': 6, 'file': '06.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 50.0, 'sub_source': ''}, {'idx': 7, 'file': '07.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 60.0, 'sub_source': ''}, {'idx': 8, 'file': '08.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 70.0, 'sub_source': ''}, {'idx': 9, 'file': '09.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 80.0, 'sub_source': ''}, {'idx': 10, 'file': '10.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 90.0, 'sub_source': ''}], 'folder_ok': True, 'sub_episodes': 10, 'ocr_eps': 0, 'stats': {}, 'beats': [{'id': 0, 'ep': 1, 'g0': 0, 'g1': 2, 'start': 0, 'end': 2, 'dur': 2, 'text': '滚出去', 'cues': 1, 'score': 2, 'hits': ['滚']}], 'highlights': [], 'hook_limit': 100, 'hook_meta': {}, 'acts': 0, 'pending_acts': 10, 'endings': [], 'acts_info': {'mode': 'deferred', 'deferred': True, 'pending_before': 10, 'pending_after': 10, 'scanned': 0, 'events': 0, 'failed': 0, 'cache_hit': 0, 'threshold': 8, 'error': ''}, 'acts_mode': 'deferred'}, 't0': 1795417258.0187926}"
+    },
+    {
+      "name": "第一段阶段覆盖 index/acts/analyze",
+      "ok": true,
+      "detail": "['index', 'acts', 'acts', 'analyze']"
+    },
+    {
+      "name": "待扫 10 集时延后动作扫描",
+      "ok": true,
+      "detail": "('deferred', {'mode': 'deferred', 'deferred': True, 'pending_before': 10, 'pending_after': 10, 'scanned': 0, 'events': 0, 'failed': 0, 'cache_hit': 0, 'threshold': 8, 'error': ''})"
+    },
+    {
+      "name": "第一段返回 pending_acts",
+      "ok": true,
+      "detail": "10"
+    },
+    {
+      "name": "第二段正常完成",
+      "ok": true,
+      "detail": "{'kind': 'acts', 'state': 'done', 'progress': 100, 'phase': 'done', 'msg': '完成', 'result': {'name': '__scan_phase__', 'folder': 'C:\\\\Users\\\\ADMINI~1\\\\AppData\\\\Local\\\\Temp\\\\dc_scan_phases\\\\f\\\\剧', 'total': 100.0, 'eps': [{'idx': 1, 'file': '01.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 0.0, 'sub_source': ''}, {'idx': 2, 'file': '02.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 10.0, 'sub_source': ''}, {'idx': 3, 'file': '03.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 20.0, 'sub_source': ''}, {'idx': 4, 'file': '04.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 30.0, 'sub_source': ''}, {'idx': 5, 'file': '05.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 40.0, 'sub_source': ''}, {'idx': 6, 'file': '06.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 50.0, 'sub_source': ''}, {'idx': 7, 'file': '07.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 60.0, 'sub_source': ''}, {'idx': 8, 'file': '08.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 70.0, 'sub_source': ''}, {'idx': 9, 'file': '09.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 80.0, 'sub_source': ''}, {'idx': 10, 'file': '10.mp4', 'dur': 10.0, 'w': 720, 'h': 1280, 'sub': '', 'cues': 1, 'offset': 90.0, 'sub_source': ''}], 'folder_ok': True, 'sub_episodes': 10, 'ocr_eps': 0, 'stats': {}, 'beats': [{'id': 0, 'ep': 1, 'g0': 0, 'g1': 2, 'start': 0, 'end': 2, 'dur': 2, 'text': '滚出去', 'cues': 1, 'score': 2, 'hits': ['滚']}], 'highlights': [], 'hook_limit': 100, 'hook_meta': {}, 'acts': 0, 'pending_acts': 0, 'endings': [], 'acts_info': {'mode': 'inline', 'deferred': False, 'pending_before': 10, 'pending_after': 0, 'scanned': 10, 'events': 0, 'failed': 0, 'cache_hit': 0, 'cache_key': 'k', 'cache_file': 'f', 'error': ''}, 'acts_mode': 'inline'}, 't0': 1795417258.0694864}"
+    },
+    {
+      "name": "第二段默认 force=False（重复请求幂等）",
+      "ok": true,
+      "detail": "{'v': False}"
+    },
+    {
+      "name": "补扫后 pending 归零",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "name": "补扫记录 before/after",
+      "ok": true,
+      "detail": "{'mode': 'inline', 'deferred': False, 'pending_before': 10, 'pending_after': 0, 'scanned': 10, 'events': 0, 'failed': 0, 'cache_hit': 0, 'cache_key': 'k', 'cache_file': 'f', 'error': ''}"
+    },
+    {
+      "name": "补扫阶段包含 acts/analyze",
+      "ok": true,
+      "detail": "['index', 'acts', 'acts', 'analyze', 'acts', 'acts', 'analyze']"
+    },
+    {
+      "name": "真实样片首次全部扫描",
+      "ok": true,
+      "detail": "{'events': [], 'eps': 2, 'scanned': 2, 'total': 2, 'failed': [], 'pending': 0, 'cache_key': '真实剧~fa8cddb5', 'cache_file': 'C:\\\\Users\\\\ADMINI~1\\\\AppData\\\\Local\\\\Temp\\\\dc_scan_phases\\\\g\\\\data\\\\act\\\\真实剧~fa8cddb5.json', 'cache_hit': 0, 'cache_written': True, 'aborted': False, 'cache_error': '', 'batch_hw': False, 'batch_reason': '软件解码'}"
+    },
+    {
+      "name": "扫描结果带批量解码方式",
+      "ok": true,
+      "detail": "软件解码"
+    },
+    {
+      "name": "首次扫描落盘",
+      "ok": true,
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_scan_phases\\g\\data\\act\\真实剧~fa8cddb5.json"
+    },
+    {
+      "name": "二次扫描零解码",
+      "ok": true,
+      "detail": "(0, 0.001)"
+    },
+    {
+      "name": "二次扫描事件一致",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "name": "drop_cache 删除新键缓存",
+      "ok": true,
+      "detail": "['C:\\\\Users\\\\ADMINI~1\\\\AppData\\\\Local\\\\Temp\\\\dc_scan_phases\\\\g\\\\data\\\\act\\\\真实剧~fa8cddb5.json']"
+    }
+  ]
+}

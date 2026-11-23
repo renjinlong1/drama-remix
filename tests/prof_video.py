@@ -116,7 +116,7 @@ def stage_scan(n: int = EPS) -> dict:
     r = vision.scan_project(proj, ROOT, force=True)
     dt = time.time() - t
     try:
-        (ROOT / "data" / "act" / "__perf__.json").unlink()
+        vision.drop_cache(proj, ROOT)
     except OSError:
         pass
     return {"secs": round(dt, 2), "per_ep": round(dt / max(1, n), 3),

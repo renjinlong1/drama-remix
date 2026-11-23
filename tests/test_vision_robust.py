@@ -186,7 +186,7 @@ def test_failure_isolation() -> None:
         for i in (1, 2, 3)]}
     old = V.scan_episode
 
-    def fake(path, has_audio=None, threads=None, timeout=None):
+    def fake(path, has_audio=None, threads=None, timeout=None, use_hw=None):
         if path == "x2.mp4":
             raise RuntimeError("坏文件")
         return {"events": [{"t0": 0.1, "t1": 0.3, "dur": 0.2, "v": 1.0,

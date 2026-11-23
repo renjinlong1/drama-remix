@@ -1,0 +1,68 @@
+{
+  "when": "2026-11-23 14:54:36",
+  "source": "10022_20261120_6242-20261120T025836Z-1-001.json",
+  "total_eps": 40,
+  "minutes": 17.1,
+  "hw_mode": "hardware",
+  "hw_backend": "cuda",
+  "batch": {
+    "hardware": false,
+    "backend": "",
+    "reason": "实测批量链路硬件更慢"
+  },
+  "runs": {
+    "miss_8w": {
+      "secs": 9.757,
+      "scanned": 8,
+      "events": 91,
+      "cache_hit": 0,
+      "pending": 0,
+      "batch_hw": false,
+      "batch_reason": "实测批量链路硬件慢 359%"
+    },
+    "hit_same_folder": {
+      "secs": 0.002,
+      "scanned": 0,
+      "events": 91,
+      "cache_hit": 8,
+      "pending": 0,
+      "batch_hw": false,
+      "batch_reason": "实测批量链路硬件慢 359%"
+    },
+    "hit_renamed": {
+      "secs": 0.001,
+      "scanned": 0,
+      "events": 91,
+      "cache_hit": 8,
+      "pending": 0,
+      "batch_hw": false,
+      "batch_reason": "实测批量链路硬件慢 359%"
+    },
+    "miss_4w": {
+      "secs": 11.299,
+      "scanned": 8,
+      "events": 91,
+      "cache_hit": 0,
+      "pending": 0,
+      "batch_hw": false,
+      "batch_reason": "实测批量链路硬件慢 359%"
+    },
+    "miss_8w_2": {
+      "secs": 9.742,
+      "scanned": 8,
+      "events": 91,
+      "cache_hit": 0,
+      "pending": 0,
+      "batch_hw": false,
+      "batch_reason": "实测批量链路硬件慢 359%"
+    }
+  },
+  "speedup_4_to_8": 1.16,
+  "deferred": {
+    "pending_secs": 0.001,
+    "analyze_secs": 0.02,
+    "first_screen_secs": 0.021,
+    "full_acts_estimate_secs": 48.7,
+    "saved_wait_secs": 48.7
+  }
+}

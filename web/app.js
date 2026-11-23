@@ -1,7 +1,7 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-23.4';
+window.__APP_BUILD__ = '2026-11-23.5';
 
 /* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
    以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
@@ -113,6 +113,8 @@ function endScan() {
   $('#btnScan').disabled = false;
   impHide();
 }
+const PHASE_LABEL = { queued: '排队中', index: '分集与字幕', ocr: '画面字幕识别',
+  acts: '画面动作扫描', analyze: '剧情分析', done: '完成', error: '出错' };
 function watchJob(onDone, onFail) {
   clearInterval(S.jobTimer);
   $('#globalbar').classList.add('on');
@@ -123,6 +125,11 @@ function watchJob(onDone, onFail) {
     $('#progBar').style.width = pct + '%';
     $('#globalbar').style.width = pct + '%';
     $('#pmsg').textContent = j.msg || '';
+    // 导入遮罩上显示当前阶段（index / ocr / acts / analyze），
+    // 几十集时用户能一眼看出卡在哪一步，而不是只有一个百分比
+    if (S.scanPending && $('#impSub')) {
+      $('#impSub').textContent = (PHASE_LABEL[j.phase] || '处理中') + ' · ' + (j.msg || '');
+    }
     if (j.state === 'done' || j.state === 'error') {
       clearInterval(S.jobTimer);
       endScan();
@@ -175,7 +182,10 @@ async function doScan() {
     $('#pmsg').textContent = '扫描中…';
     watchJob((res) => {
       endScan();
-      if (res) applyProject(res);
+      if (res) {
+        applyProject(res);
+        startDeferredActs(res);
+      }
       renderRecents();
     });
   } catch (e) {
@@ -192,6 +202,51 @@ async function runOcr(force) {
     toast('开始从画面识别字幕，集数多的话要跑几分钟');
     watchJob((res) => { if (res) applyProject(res); });
   } catch (e) { toast(e.message, true); }
+}
+
+/* 两段式导入的第二段：时间轴先出来，动作扫描放后台补。
+   补扫只填空缺（force=false），重复点 / 两个标签页同时开都不会重扫已完成的集。 */
+async function startDeferredActs(d) {
+  const n = Number(d && d.pending_acts) || 0;
+  if (!n) return;
+  toast('时间轴已就绪：还有 ' + n + ' 集画面动作在后台补扫，不影响先挑钩子');
+  try {
+    await apiStart('/api/acts', { force: false }, '补扫画面动作');
+    $('#pmsg').textContent = '补扫画面动作（' + n + ' 集）…';
+    watchJob((r) => { if (r) applyActs(r); });
+  } catch (e) {
+    toast('画面动作补扫未启动：' + e.message, true);
+  }
+}
+
+/* 只吸收动作扫描的结果：不重置已选钩子 / 时长 / 方案，避免补扫完成把用户
+   刚做的选择清掉。候选分数变了，但选中的那一秒保持不变。 */
+function applyActs(d) {
+  if (!d || d.name !== S.name) return;
+  const keep = S.hook ? Object.assign({}, S.hook) : null;
+  S.beats = d.beats || S.beats;
+  if (Array.isArray(d.highlights)) S.highlights = d.highlights;
+  S.hookMeta = d.hook_meta || {};
+  S.endings = d.endings || [];
+  // 补扫后候选重排：已选开头如果不在新列表里，补一张「已选」卡片，
+  // 否则界面上会出现「方案有开头、候选区却没有任何一张是选中的」。
+  if (keep && !S.highlights.some((h) => h.ep === keep.ep &&
+      Math.abs((h.g0 || 0) - (keep.g0 || 0)) < 0.15)) {
+    S.highlights = [{
+      ep: keep.ep, g0: keep.g0, g1: keep.g1, dur: keep.dur, text: keep.text || '',
+      score: Number(keep.score) || 0, manual: true,
+      primary_label: '已选开头', kind: '台词冲突', types: ['dialog'],
+    }].concat(S.highlights);
+  }
+  const chip = $('#metaActs');
+  if (chip) {
+    chip.hidden = !d.acts;
+    chip.textContent = '画面动作 ' + (d.acts || 0) + ' 处';
+  }
+  renderHooks(); renderEnds(); draw();
+  const ai = d.acts_info || {};
+  toast('画面动作补扫完成：' + (d.acts || 0) + ' 处' +
+    (ai.failed ? '（' + ai.failed + ' 集失败，下次导入会自动重试）' : ''));
 }
 
 function applyProject(d) {
@@ -249,7 +304,8 @@ function applyProject(d) {
     '<span class="chip ' + (d.sub_episodes === S.eps.length ? 'ok' : 'warn') + '">字幕 ' +
       d.sub_episodes + '/' + S.eps.length + '</span>' +
     (d.ocr_eps ? '<span class="chip ok">画面识别 ' + d.ocr_eps + ' 集</span>' : '') +
-    (d.acts ? '<span class="chip">画面动作 ' + d.acts + ' 处</span>' : '') +
+    '<span class="chip" id="metaActs"' + (d.acts ? '' : ' hidden') + '>画面动作 ' +
+      (d.acts || 0) + ' 处</span>' +
     '<span class="chip">' + (S.beats.length) + ' 个节拍</span>';
 
   // 源视频不在本机（换机后只拷了项目存档）：明说，别让人对着黑缩略图猜
@@ -3387,6 +3443,10 @@ function renderHwBody(d) {
     rows.push(hwRow(bm.faster, '短样片基准',
       '硬件 ' + bm.hw_ms + 'ms / 软件 ' + bm.sw_ms + 'ms（比值 ' + bm.ratio + '）'));
   }
+  if (d.batch) {
+    rows.push(hwRow(true, '批量抓取',
+      (d.batch.hardware ? '硬件解码' : '软件解码') + '（' + (d.batch.reason || '') + '）'));
+  }
   rows.push(hwRow(true, '运行统计',
     '硬件解码 ' + ((d.decodes || {}).hardware || 0) + ' 次 · 软件 ' +
     ((d.decodes || {}).software || 0) + ' 次 · 自动回退 ' + (d.fallbacks || 0) + ' 次'));
@@ -3461,7 +3521,10 @@ async function boot() {
     renderHwChip(st.hwaccel);
     if (st.hwaccel && st.hwaccel.checking) pollHw();
     const s = await api('/api/state', undefined, 'GET');
-    if (s && s.ready) applyProject(s);
+    if (s && s.ready) {
+      applyProject(s);
+      startDeferredActs(s);      // 刷新时若还有动作没补完，接着补（重复请求幂等）
+    }
   } catch (e) { /* 首屏无状态是正常的 */ }
 }
 
@@ -3519,6 +3582,7 @@ async function renderRecents(list) {
       try {
         const d = await api('/api/open', { path: el.dataset.p });
         applyProject(d);
+        startDeferredActs(d);
         renderRecents();
       } catch (e) { toast(e.message, true); }
     };

@@ -285,7 +285,7 @@ def recent(limit: int = 12) -> list[dict]:
     return [{**x, "missing": not folder_ok(x)} for x in base]
 
 
-def forget(name: str) -> list[str]:
+def forget(name: str, folder: str = "") -> list[str]:
     """彻底清掉一部剧在本机留下的**项目记录**。
 
     删「最近项目」时只 unlink 掉 projects/*.json 是不够的：同名 .json.bak
@@ -293,13 +293,21 @@ def forget(name: str) -> list[str]:
     recent() 的元数据缓存还可能把已删的条目再吐回列表。这三处一起清，
     重新导入才会真正按新项目走一遍扫描分析。
 
+    动作缓存现在按「素材文件夹名 + 路径哈希」存，所以优先用项目里记录的
+    folder 精确删除；调用方没传 folder 时自己从项目存档里读一次。
     data/ocr 的字幕缓存按界面承诺保留（按文件夹名索引、带自校验），
     原片与成片也一律不动。
     """
     safe = _safe_name(name)
     removed: list[str] = []
+    if not folder:
+        try:
+            jf = PROJ / f"{safe}.json"
+            if jf.exists():
+                folder = str(json.loads(jf.read_text(encoding="utf-8")).get("folder") or "")
+        except Exception:  # noqa: BLE001 存档坏了也继续清能清的
+            folder = ""
     for p in (PROJ / f"{safe}.json", PROJ / f"{safe}.json.bak",
-              ROOT / "data" / "act" / f"{safe}.json",
               ROOT / "data" / "multimodal" / f"{safe}.json"):
         try:
             if p.exists():
@@ -307,12 +315,23 @@ def forget(name: str) -> list[str]:
                 removed.append(str(p))
         except OSError:
             continue
+    try:
+        from . import vision as visionmod
+        removed.extend(visionmod.drop_cache({"name": name, "folder": folder}, ROOT))
+    except Exception:  # noqa: BLE001 缓存模块不可用也不能让删除失败
+        for p in (ROOT / "data" / "act" / f"{safe}.json",):
+            try:
+                if p.exists():
+                    p.unlink()
+                    removed.append(str(p))
+            except OSError:
+                pass
     _RECENT_CACHE.update(key=None, items=[])   # 下一轮 recent() 必须重读目录
     return removed
 
 
 def purge_missing() -> list[str]:
-    """删掉源视频已经不在这台电脑上的项目（只动 projects/*.json）。
+    """删掉源视频已经不在这台电脑上的项目（只动 projects/*.json 与动作缓存）。
 
     data/ocr 里的字幕缓存保留：真有那么一天把原片找回来，重新导入还能直接命中。
     """
@@ -325,6 +344,11 @@ def purge_missing() -> list[str]:
             continue
         if folder_ok(d):
             continue
+        try:
+            from . import vision as visionmod
+            visionmod.drop_cache(d, ROOT)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             p.unlink()
             gone.append(str(d.get("name") or p.stem))

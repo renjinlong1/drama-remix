@@ -527,6 +527,19 @@ def status() -> dict:
         s["backend_label"] = _BACKEND_LABEL.get(s["backend"] or "", s["backend"] or "")
         s["enabled"] = s["mode"] == "hardware"
         s["checking"] = not s["checked"]
+        if s["checked"] and s["mode"] == "hardware" and s["backend"]:
+            bm = s.get("benchmark") or {}
+            if s.get("override"):
+                s["batch"] = {"hardware": True, "backend": s["backend"],
+                              "reason": f"用户指定后端 {s['backend']}"}
+            elif bm.get("valid") and not bm.get("faster"):
+                s["batch"] = {"hardware": False, "backend": "",
+                              "reason": "实测批量链路硬件更慢"}
+            else:
+                s["batch"] = {"hardware": True, "backend": s["backend"],
+                              "reason": "实测硬件更快"}
+        else:
+            s["batch"] = {"hardware": False, "backend": "", "reason": "软件解码"}
         return s
 
 
@@ -543,6 +556,27 @@ def prefix() -> list[str]:
         if not _STATE["checked"] or _STATE["mode"] != "hardware" or not _STATE["backend"]:
             return []
         return ["-hwaccel", _STATE["backend"]]
+
+
+def batch_profile() -> dict:
+    """整剧批量扫描用哪种解码。
+
+    批量是吞吐场景：8 路并发时硬件解码的设备竞争、以及解码帧回传系统内存
+    的代价会被放大（本机 RTX 3060 实测 CUDA 反而慢近一倍）。auto 模式下
+    按启动自检的短基准决策：实测更慢就走软件；用户显式指定后端时尊重用户。
+    """
+    with _LOCK:
+        st = _STATE
+        if not st["checked"] or st["mode"] != "hardware" or not st["backend"]:
+            return {"hardware": False, "backend": "", "reason": "软件解码"}
+        if st.get("override"):
+            return {"hardware": True, "backend": st["backend"],
+                    "reason": f"用户指定后端 {st['backend']}"}
+        bm = st.get("benchmark") or {}
+        if bm.get("valid") and not bm.get("faster"):
+            return {"hardware": False, "backend": "",
+                    "reason": f"实测批量链路硬件慢 {round((bm['ratio'] - 1) * 100)}%"}
+        return {"hardware": True, "backend": st["backend"], "reason": "实测硬件更快"}
 
 
 def record_decode(mode: str) -> None:

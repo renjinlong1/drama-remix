@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,7 +28,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import ffmpegx
@@ -53,7 +54,8 @@ AUD_SR = 48000           # 源采样率探测不到时的兜底
 AUD_SPIKE = 9.0          # 比滚动中位数高 9 dB
 AUD_FLOOR = -18.0        # 绝对下限：太小声的窗口不参与（避免底噪抖动）
 PCM_CHUNK = 262144       # 流式读取块大小：一块 256KB ≈ 2.7 秒 48k 单声道
-VISION_WORKERS = 4       # 整剧扫描并发上限（每路还会限制 ffmpeg 线程数）
+VISION_WORKERS = 8       # 整剧扫描并发上限（每路再限制 ffmpeg 线程数）
+CACHE_VERSION = 2        # 动作缓存结构版本：v2 起带 key / folder，能识别跨文件夹串数据
 
 _BF = re.compile(r"pblack:(\d+)\s+pts:\d+\s+t:([\d.]+)")
 _PEAK = re.compile(r"lavfi\.astats\.(\d+)\.Peak_level=(-?[\d.]+|inf|-inf|nan)", re.I)
@@ -267,7 +269,7 @@ def _scan_once(cmd: list[str], has_audio: bool, sr: int,
 
 def _scan_signals(video: str, has_audio: bool = True,
                   sr: int | None = None, threads: int = 2,
-                  timeout: float = 600.0) -> tuple[list, list]:
+                  timeout: float = 600.0, use_hw: bool = True) -> tuple[list, list]:
     """一次解码同时拿画面帧差与声音峰值，边解边读不攒整段。
 
     以前 `_diff_series` 和 `_audio_series` 各起一个 ffmpeg，同一集解码两遍；
@@ -275,8 +277,9 @@ def _scan_signals(video: str, has_audio: bool = True,
     现在 stdout 的 PCM 也改成流式：不再 communicate() 攒完整段再算，
     峰值内存从「片长×8 字节」降到「一个读块」。
 
-    硬件解码由 ffmpegx 自动注入；失败/超时/什么都没读到时，整条命令用软件
-    解码重跑一次，上层拿到的 series/audio 与纯软件路径逐条一致。
+    硬件解码由 ffmpegx 自动注入；整剧批量扫描时 `scan_project` 会按实测收益
+    决定是否走硬件（`use_hw=False`）。失败/超时/什么都没读到时，整条命令用
+    软件解码重跑一次，上层拿到的 series/audio 与纯软件路径逐条一致。
     """
     if sr is None:
         try:
@@ -285,7 +288,7 @@ def _scan_signals(video: str, has_audio: bool = True,
             sr = 0
     sr = sr or AUD_SR
     threads = max(1, int(threads))
-    cmd, used = _scan_cmd(video, has_audio, threads, use_hw=True)
+    cmd, used = _scan_cmd(video, has_audio, threads, use_hw=use_hw)
     series, audio, rc, tail, timed_out, killed = _scan_once(cmd, has_audio, sr, timeout)
 
     bad = bool(timed_out or killed or (rc not in (0, None))
@@ -442,8 +445,13 @@ def _default_threads() -> int:
 
 
 def scan_episode(video: str | Path, has_audio: bool | None = None,
-                 threads: int | None = None, timeout: float | None = None) -> dict:
-    """一集的全部动作峰值。只保留有画面的强事件，最多 40 个。"""
+                 threads: int | None = None, timeout: float | None = None,
+                 use_hw: bool | None = None) -> dict:
+    """一集的全部动作峰值。只保留有画面的强事件，最多 40 个。
+
+    `use_hw=None` 保持旧行为（有硬件就注入）；整剧扫描会显式传 False/True，
+    按 `hwaccel.batch_profile()` 的实测结论决定批量解码方式。
+    """
     video = str(video)
     t_start = time.time()
     info: dict = {}
@@ -461,7 +469,8 @@ def scan_episode(video: str | Path, has_audio: bool | None = None,
             raise RuntimeError("numpy 不可用，退回逐次解码")
         diff, audio = _scan_signals(video, has_audio,
                                     threads=threads or _default_threads(),
-                                    timeout=timeout)
+                                    timeout=timeout,
+                                    use_hw=True if use_hw is None else bool(use_hw))
     except Exception as e:      # noqa: BLE001 合并解码失败 → 退回两条独立老路
         if "超时" in str(e):    # 已经卡住了，再跑两条老路只会再等一遍
             raise
@@ -488,72 +497,385 @@ def scan_episode(video: str | Path, has_audio: bool | None = None,
 
 
 # ── 整剧缓存 ─────────────────────────────────────────────────────────
-def cache_path(name: str, root: Path) -> Path:
-    safe = "".join(ch for ch in name if ch not in '\\/:*?"<>|').strip() or "project"
-    return root / "data" / "act" / f"{safe}.json"
+# 缓存的身份不是「用户随手起的剧名」，而是「素材文件夹」：
+#   文件夹名 + 文件夹绝对路径的短哈希。
+# 这样同一部剧改个剧名重新导入仍然秒命中（以前按剧名存，改名字就白扫一遍）；
+# 不同目录下同名文件夹又不会互相串数据（只按文件夹名会撞车）。
+_KEY_LOCKS: dict[str, threading.RLock] = {}
+_KEY_LOCKS_GUARD = threading.Lock()
+_ACT_DIR = ("data", "act")
 
 
-def scan_project(proj: dict, root: Path, progress=None, force: bool = False) -> dict:
-    """扫描整剧，结果按「剧名 + 每集首尾」存盘，重扫只补新集。"""
-    path = cache_path(proj["name"], root)
-    cache: dict = {}
-    if path.exists() and not force:
+def _safe_file(name: str, limit: int | None = 80) -> str:
+    safe = "".join(ch for ch in str(name or "") if ch not in '\\/:*?"<>|').strip(" .")
+    if limit:
+        safe = safe[:limit].strip(" .")
+    return safe or "project"
+
+
+def _norm_folder(folder) -> str:
+    raw = str(folder or "").strip()
+    if not raw:
+        return ""
+    try:
+        return os.path.normcase(os.path.abspath(raw))
+    except Exception:       # noqa: BLE001
+        return raw.lower()
+
+
+def cache_key(proj: dict) -> str:
+    """动作缓存键：素材文件夹名 + 路径哈希；没有文件夹时退回剧名（老项目 / 测试）。"""
+    folder = str(proj.get("folder") or "").strip()
+    if not folder:
+        return _safe_file(proj.get("name") or "project")
+    base = _safe_file(Path(folder).name or proj.get("name") or "project")
+    h = hashlib.sha1(_norm_folder(folder).encode("utf-8", "replace")).hexdigest()[:8]
+    return f"{base}~{h}"
+
+
+def cache_path(key: str, root: Path) -> Path:
+    # key 已经带 ~哈希，不能再按 80 字截断，否则长文件夹名会把哈希切掉、撞回同名目录
+    return Path(root).joinpath(*_ACT_DIR) / f"{_safe_file(key, limit=None)}.json"
+
+
+def cache_file(proj: dict, root: Path) -> Path:
+    return cache_path(cache_key(proj), root)
+
+
+def _read_cache(path: Path) -> dict:
+    # Windows 上 os.replace 与读取可能撞车（读者短暂持有句柄）：
+    # 重试几次，读不到就当未命中，绝不把整次导入打挂。
+    for attempt in range(3):
         try:
-            cache = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:   # noqa: BLE001
-            cache = {}
-    eps: dict = cache.get("eps") or {}
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except PermissionError:
+            if attempt == 2:
+                return {}
+            time.sleep(0.02)
+        except Exception:       # noqa: BLE001 半截文件 / 换编码都当没有缓存
+            return {}
+    return {}
 
-    def stale(ep: dict) -> bool:
-        r = eps.get(str(ep["idx"]))
-        if not r:
-            return True
-        # 换了片源（同名不同文件 / 时长变了）就重扫，避免拿旧集的动作点
-        return (r.get("file") != ep["file"]
-                or abs(float(r.get("dur", -1)) - float(ep["dur"])) > 0.5)
 
-    todo = [e for e in proj["episodes"] if force or stale(e)]
-    done = 0
-    failed: list[dict] = []
-    total = max(1, len(todo))
-    cpus = os.cpu_count() or 4
-    workers = max(1, min(VISION_WORKERS, cpus // 4 or 1, len(todo) or 1))
-    threads = max(1, min(3, cpus // max(1, workers)))
+def _ep_stale(ep: dict, r: dict | None) -> bool:
+    """这一集的缓存还能不能用。
 
-    def one(ep: dict) -> tuple[dict, dict]:
-        try:
-            res = scan_episode(ep["path"], ep.get("has_audio"),
-                               threads=threads)
-        except Exception as e:          # noqa: BLE001 单集失败不能拖垮整次导入
-            print(f"[vision] 第{ep['idx']}集扫描失败：{e}", flush=True)
-            res = {"events": [], "motion": 0, "spikes": 0, "secs": 0.0,
-                   "error": str(e)[:200]}
-        res["file"] = ep["file"]
-        res["dur"] = round(float(ep["dur"]), 3)
-        return ep, res
+    失败集（res.error）一律算未命中：上次坏文件 / 设备异常不该被永久钉死，
+    下次导入或补扫要重新试一次。
+    """
+    if not isinstance(r, dict) or r.get("error"):
+        return True
+    if r.get("file") != ep.get("file"):
+        return True
+    try:
+        return abs(float(r.get("dur", -1)) - float(ep.get("dur", -1))) > 0.5
+    except (TypeError, ValueError):
+        return True
 
-    if todo:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for ep, res in pool.map(one, todo):
-                eps[str(ep["idx"])] = res
-                done += 1
-                if res.get("error"):
-                    failed.append({"ep": ep["idx"], "msg": res["error"]})
-                if progress:
-                    progress(done / total * 100.0, f"动作扫描 {done}/{total} 集")
+
+def _cache_ok(data: dict, proj: dict, key: str, folder: str) -> bool:
+    if not data:
+        return False
+    try:
+        if int(data.get("version") or 0) > CACHE_VERSION:
+            return False        # 新版本写的结构，旧代码别猜
+    except (TypeError, ValueError):
+        return False
+    if data.get("key") and str(data["key"]) != key:
+        return False
+    if data.get("folder") and _norm_folder(data["folder"]) != folder:
+        return False            # 路径哈希碰撞 / 文件夹被搬到别处：不认这份数据
+    return isinstance(data.get("eps"), dict)
+
+
+def _legacy_ok(data: dict, proj: dict) -> bool:
+    """老缓存（按剧名存、没有 folder 字段）能不能迁移过来。
+
+    要求剧名一致，且至少有一集的 file/dur 对得上 —— 只认真正属于这次导入的数据。
+    """
+    if not data or str(data.get("name") or "") != str(proj.get("name") or ""):
+        return False
+    if data.get("folder") and _norm_folder(data["folder"]) != _norm_folder(proj.get("folder")):
+        return False
+    eps = data.get("eps")
+    if not isinstance(eps, dict):
+        return False
+    episodes = proj.get("episodes") or []
+    return any(not _ep_stale(e, eps.get(str(e.get("idx")))) for e in episodes)
+
+
+def _load_cache(proj: dict, root: Path) -> tuple[dict, dict]:
+    """读缓存；新键没命中时尝试迁移老的「按剧名」缓存。"""
+    key = cache_key(proj)
+    path = cache_path(key, root)
+    folder = _norm_folder(proj.get("folder"))
+    info = {"key": key, "file": str(path), "migrated_from": "", "hit": False}
+
+    data = _read_cache(path) if path.exists() else {}
+    if _cache_ok(data, proj, key, folder):
+        info["hit"] = bool(data.get("eps"))
+        return dict(data.get("eps") or {}), info
+
+    legacy = Path(root).joinpath(*_ACT_DIR) / f"{_safe_file(proj.get('name'))}.json"
+    try:
+        same = legacy.resolve() == path.resolve()
+    except OSError:
+        same = False
+    if not same and legacy.exists():
+        old = _read_cache(legacy)
+        if _legacy_ok(old, proj):
+            info.update(migrated_from=str(legacy), hit=True)
+            return dict(old.get("eps") or {}), info
+    return {}, info
+
+
+def _key_lock(key: str) -> threading.RLock:
+    with _KEY_LOCKS_GUARD:
+        lk = _KEY_LOCKS.get(key)
+        if lk is None:
+            lk = threading.RLock()
+            _KEY_LOCKS[key] = lk
+        return lk
+
+
+def _write_cache(path: Path, proj: dict, key: str, eps: dict) -> None:
+    """原子写：先落临时文件再 replace，进程被杀也不会留下半截 JSON。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"name": proj["name"], "eps": eps},
-                               ensure_ascii=False), encoding="utf-8")
-    all_events: list[dict] = []
-    for e in proj["episodes"]:
-        r = eps.get(str(e["idx"])) or {}
-        for ev in r.get("events", []):
-            all_events.append({
+    payload = {"version": CACHE_VERSION, "key": key,
+               "name": proj.get("name") or "", "folder": proj.get("folder") or "",
+               "eps": eps, "saved_at": int(time.time())}
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    for attempt in range(3):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 2:
+                raise
+            time.sleep(0.05)
+
+
+def _cached_events(proj: dict, eps: dict) -> list[dict]:
+    """把按集缓存拼回全剧时间轴；只回放确认有效的集。"""
+    out: list[dict] = []
+    for e in proj.get("episodes") or []:
+        r = eps.get(str(e.get("idx")))
+        if _ep_stale(e, r):
+            continue
+        for ev in (r or {}).get("events") or []:
+            out.append({
                 "ep": e["idx"],
                 "g0": round(e["offset"] + ev["t0"], 3),
                 "g1": round(e["offset"] + ev["t1"], 3),
                 "v": ev.get("v", 0.0), "a": ev.get("a", 0.0),
                 "score": ev.get("score", 0.0),
             })
-    return {"events": all_events, "eps": len(eps), "scanned": len(todo),
-            "total": len(proj["episodes"]), "failed": failed}
+    return out
+
+
+def pending(proj: dict, root: Path) -> int:
+    """还有多少集需要做动作扫描（没扫过、片源变了、上次失败都算）。"""
+    eps, _info = _load_cache(proj, root)
+    return sum(1 for e in proj.get("episodes") or []
+               if _ep_stale(e, eps.get(str(e.get("idx")))))
+
+
+def cached_events(proj: dict, root: Path) -> list[dict]:
+    """不启动解码，直接把缓存里有效的动作点拼成全剧事件（延后扫描时先用着）。"""
+    eps, _info = _load_cache(proj, root)
+    return _cached_events(proj, eps)
+
+
+def drop_cache(proj: dict, root: Path) -> list[str]:
+    """删掉一部剧的动作缓存：新键、老剧名键，以及同文件夹名的其它哈希文件。"""
+    key = cache_key(proj)
+    folder = _norm_folder(proj.get("folder"))
+    base = _safe_file(Path(str(proj.get("folder") or "")).name or proj.get("name"))
+    cands = {cache_path(key, root), cache_path(_safe_file(proj.get("name")), root)}
+    act_dir = Path(root).joinpath(*_ACT_DIR)
+    if folder and act_dir.exists():
+        for p in act_dir.iterdir():
+            if p.suffix != ".json" or not p.name.startswith(f"{base}~"):
+                continue
+            d = _read_cache(p)
+            if _norm_folder(d.get("folder")) == folder:
+                cands.add(p)
+    removed: list[str] = []
+    for p in cands:
+        try:
+            if p.exists():
+                p.unlink()
+                removed.append(str(p))
+        except OSError:
+            continue
+    return removed
+
+
+def _scan_workers(n_todo: int) -> int:
+    """整剧动作扫描并发：默认 8 路上限，按 CPU 核数折半，可用 DC_ACT_WORKERS 覆盖。"""
+    try:
+        cpu = os.cpu_count() or 4
+    except Exception:       # noqa: BLE001
+        cpu = 4
+    env = os.environ.get("DC_ACT_WORKERS")
+    if env:
+        try:
+            want = int(env)
+        except ValueError:
+            want = 0
+    else:
+        want = max(2, min(VISION_WORKERS, cpu // 2))
+    return max(1, min(VISION_WORKERS, want or 1, max(1, n_todo)))
+
+
+def _scan_threads(workers: int) -> int:
+    """每路 ffmpeg 线程数：8 路并发时每路 2 线程，避免把核心全占满反而更慢。"""
+    try:
+        cpu = os.cpu_count() or 4
+    except Exception:       # noqa: BLE001
+        cpu = 4
+    env = os.environ.get("DC_ACT_THREADS")
+    if env:
+        try:
+            want = int(env)
+        except ValueError:
+            want = 0
+    else:
+        want = max(1, min(2, cpu // max(1, workers)))
+    return max(1, min(8, want or 1))
+
+
+def scan_project(proj: dict, root: Path, progress=None, force: bool = False,
+                 should_stop=None) -> dict:
+    """扫描整剧，按「素材文件夹」增量缓存。
+
+    - 同一文件夹重复调用是幂等的：第二次只补没扫过 / 失败的集。
+    - 同一缓存的并发调用串行化：后来者等前一次写完再读，不会两批 ffmpeg 一起轰盘。
+    - `should_stop` 让调用方在项目被删除时及时收手，避免把刚清掉的缓存写回来。
+    """
+    key = cache_key(proj)
+    path = cache_path(key, root)
+    episodes = proj.get("episodes") or []
+    lock = _key_lock(key)
+
+    with lock:
+        eps, info = _load_cache(proj, root)
+        todo = [e for e in episodes
+                if force or _ep_stale(e, eps.get(str(e.get("idx"))))]
+        cache_hit = max(0, len(episodes) - len(todo))
+        workers = _scan_workers(len(todo))
+        threads = _scan_threads(workers)
+        # 批量吞吐场景：按启动自检的实测收益决定解码方式（硬件回传内存会被并发放大）
+        batch = ffmpegx.hwaccel.batch_profile()
+        mode_txt = "硬件" if batch.get("hardware") else "软件"
+        total = max(1, len(todo))
+        done = 0
+        failed: list[dict] = []
+        aborted = False
+        cache_error = ""
+
+        def stopped() -> bool:
+            try:
+                return bool(should_stop and should_stop())
+            except Exception:   # noqa: BLE001 判断本身出错就别阻断扫描
+                return False
+
+        def one(ep: dict) -> tuple[dict, dict]:
+            try:
+                res = scan_episode(ep["path"], ep.get("has_audio"), threads=threads,
+                                   use_hw=bool(batch.get("hardware")))
+            except Exception as e:      # noqa: BLE001 单集失败不能拖垮整次导入
+                print(f"[vision] 第{ep['idx']}集扫描失败：{e}", flush=True)
+                res = {"events": [], "motion": 0, "spikes": 0, "secs": 0.0,
+                       "error": str(e)[:200]}
+            res["file"] = ep["file"]
+            res["dur"] = round(float(ep["dur"]), 3)
+            return ep, res
+
+        if todo and not stopped():
+            pool = ThreadPoolExecutor(max_workers=workers)
+            futs = {}
+            try:
+                for ep in todo:
+                    if stopped():
+                        aborted = True
+                        break
+                    futs[pool.submit(one, ep)] = ep
+                for fut in as_completed(futs):
+                    ep, res = fut.result()
+                    eps[str(ep["idx"])] = res
+                    done += 1
+                    if res.get("error"):
+                        failed.append({"ep": ep["idx"], "msg": res["error"]})
+                    if progress:
+                        progress(done / total * 100.0,
+                                 f"动作扫描 {done}/{total} 集（{workers} 路 · {mode_txt}解码）")
+                    # 每集落一次盘：进程中途被杀也只丢正在跑的那几集
+                    try:
+                        _write_cache(path, proj, key, eps)
+                    except Exception as e:      # noqa: BLE001 缓存写失败不影响本次结果
+                        cache_error = str(e)[:160]
+                    if stopped():
+                        aborted = True
+                        break
+            finally:
+                pool.shutdown(wait=not aborted, cancel_futures=aborted)
+        elif todo and stopped():
+            aborted = True
+        # 收尾前再看一眼墓碑：删除接口可能刚在最后一批扫完时删掉缓存
+        if not aborted and (todo or info.get("migrated_from")) and stopped():
+            aborted = True
+
+        if aborted:
+            # 项目刚被删掉：不要留下半份缓存，也不要返回可能误导调用方的数据
+            try:
+                drop_cache(proj, root)
+            except Exception:       # noqa: BLE001
+                pass
+            return {"events": [], "eps": 0, "scanned": 0,
+                    "total": len(episodes), "failed": [], "pending": 0,
+                    "cache_key": key, "cache_file": str(path),
+                    "cache_hit": cache_hit, "cache_written": False,
+                    "aborted": True, "cache_error": cache_error,
+                    "batch_hw": bool(batch.get("hardware")),
+                    "batch_reason": batch.get("reason", "")}
+
+        # 0 集可扫时也要写：可能只是刚把老「按剧名」缓存迁移到新键
+        if todo or info.get("migrated_from"):
+            try:
+                _write_cache(path, proj, key, eps)
+            except Exception as e:      # noqa: BLE001
+                cache_error = str(e)[:160]
+            if info.get("migrated_from") and not cache_error:
+                try:
+                    Path(info["migrated_from"]).unlink()
+                except OSError:
+                    pass
+            # 写到一半项目被删：把刚写的这份也清掉，别留下幽灵缓存
+            if stopped():
+                try:
+                    drop_cache(proj, root)
+                except Exception:   # noqa: BLE001
+                    pass
+                return {"events": [], "eps": 0, "scanned": 0,
+                        "total": len(episodes), "failed": [], "pending": 0,
+                        "cache_key": key, "cache_file": str(path),
+                        "cache_hit": cache_hit, "cache_written": False,
+                        "aborted": True, "cache_error": cache_error,
+                        "batch_hw": bool(batch.get("hardware")),
+                        "batch_reason": batch.get("reason", "")}
+
+    events = _cached_events(proj, eps)
+    pending_after = sum(1 for e in episodes if _ep_stale(e, eps.get(str(e.get("idx")))))
+    return {"events": events, "eps": sum(1 for e in episodes
+                                         if str(e.get("idx")) in eps),
+            "scanned": done, "total": len(episodes), "failed": failed,
+            "pending": pending_after, "cache_key": key, "cache_file": str(path),
+            "cache_hit": cache_hit, "cache_written": bool(todo or info.get("migrated_from")),
+            "aborted": False, "cache_error": cache_error,
+            "batch_hw": bool(batch.get("hardware")),
+            "batch_reason": batch.get("reason", "")}

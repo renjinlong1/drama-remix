@@ -494,3 +494,80 @@ tag `v2026.11.23-hookpool`。`engine/analyze.py`：
 回归：新增 `tests/test_hook_limit.py` 39 项；`test_hook_recall` 11 项
 （召回 100%、前 24 条精度 100%、全池 50%）；`test_hook_pool` 16 项；
 全量 15 个套件 **537 项断言 0 失败**。
+
+## 十四、两段式导入 / 动作缓存 / 8 路并发（P0-4）
+
+tag `v2026.11.23-scanfast`。目标：减少重复扫描与首屏等待，提升整剧抓取速度，
+不改变现有功能语义（动作事件、钩子、顺剪结果一致）。
+
+### 阶段划分
+
+`POST /api/scan` 拆成两段，任务状态 `/api/job` 新增 `phase`：
+
+| phase | 内容 | 是否可延后 |
+|---|---|---|
+| `queued` | 排队 | — |
+| `index` | 分集 + 字幕配对 + ffprobe | 否 |
+| `ocr` | 画面硬字幕识别（可选） | 否 |
+| `acts` | 画面动作扫描 | **是** |
+| `analyze` | 节拍 / 钩子 / 结尾分析 | 否 |
+| `done` / `error` | 收尾 | — |
+
+请求体 `acts`：`auto`（默认，待扫 > `DC_ACTS_DEFER` 才延后）/ `defer` / `sync`。
+延后时 `/api/scan` 的结果带 `pending_acts`、`acts_info`（mode / pending_before /
+pending_after / cache_hit / threshold），前端随后调 `POST /api/acts`（`force=false`）补扫；
+补扫完成只刷新候选与动作数，**不重置已选钩子 / 时长 / 方案**。
+打开旧项目（`/api/open`）和刷新页面（`/api/state` + 前端）走同一套判断，可自动续扫。
+
+### 缓存键与失效
+
+- 键：`<素材文件夹名>~<文件夹绝对路径 sha1 前 8 位>`，文件 `data/act/<key>.json`。
+  同一文件夹改剧名仍命中；不同目录同名文件夹不串数据；缓存内同时写 `version` / `key` /
+  `folder`，读时逐项校验，不符即当未命中。
+- 老「按剧名」缓存一次性迁移：剧名一致且至少一集 `file`/`dur` 对得上才认，迁移后删老文件；
+  对不上则正常重扫，绝不把别的剧的动作点挂上来。
+- 失效：`file` / `dur` 变化、上次 `error`、结构版本过新、folder 元数据不符 → 该集重扫。
+  失败集不再被永久钉死，下次导入 / 补扫自动重试。
+- 并发：同一缓存键一把 `RLock`，后到请求等前一次写完再读；重复请求 `scanned=0`。
+  缓存原子写（临时文件 + `os.replace`），每集 checkpoint，进程中途被杀只丢正在跑的几集。
+- 删除：`forget(name, folder)` / `purge_missing` 精确删新键 + 老剧名键；删除接口先立墓碑
+  再清缓存，扫描侧 `should_stop` 每集检查，避免"删完又被写回"。
+
+### 并发与解码
+
+- 整剧默认 `max(2, min(8, cpu//2))` 路（16 核 → 8 路），每路 2 线程；
+  `DC_ACT_WORKERS` / `DC_ACT_THREADS` 可覆盖，上限 8 路。
+- 批量解码按启动自检的实测收益选：`hwaccel.batch_profile()`。本机 auto 模式实测
+  CUDA 批量比软件慢（见第十一节），因此批量动作扫描自动走软件；用户显式指定后端时尊重指定。
+  `/api/hwaccel` 与徽标弹层新增「批量抓取」一行说明当前选择。
+
+### 实测（16 核 / RTX 3060 / 真实 40 集项目前 8 集 / 16.8–17.1 分钟）
+
+`runtime\python.exe tests\prof_scan.py`：
+
+| 场景 | 耗时 | 说明 |
+|---|---:|---|
+| 缓存未命中 · 8 路 | 9.76 s | 1.22 s/集，91 个动作点，批量软件解码 |
+| 同文件夹重复请求 | 0.002 s | 扫描 0 集，命中 8 集 |
+| 改剧名重导 | 0.001 s | 同一文件夹键不变 |
+| 4 路 | 11.30 s | 8 路相对 4 路 **1.16×** |
+| 默认硬件 8 路（改前） | 17.0 s | 8 路并发抢 CUDA 会话，反而更慢 |
+| 两段式首屏 | 0.021 s | 清点缓存 + 剧情分析 |
+| 40 集动作估算 | 48.7 s | 首屏不再等这 48.7 s |
+
+> 8 路相对 4 路的提升受磁盘与单片解码限制，不是线性 2×；但叠加"批量软件解码"
+> 后，默认配置下 8 集从 17.0 s 降到 9.8 s（约 **1.75×**），首屏等待从整段动作扫描
+> 降到 0.02 s。
+
+### 回归验证步骤
+
+```
+runtime\python.exe tests\test_scan_phases.py     :: 68 项：键/隔离/迁移/增量/失败重试/并发/接口
+runtime\python.exe tests\test_vision_robust.py   :: 32 项：画质自适应、闪白、失败隔离
+runtime\python.exe tests\test_hwaccel.py         :: 85 项：硬件探测、回退、批量策略字段
+runtime\python.exe tests\test_pipeline.py        :: 110 项：主链路指纹不变
+runtime\python.exe tests\prof_scan.py            :: 可复现基准，写 tests/results/scan_perf.json
+```
+
+判定：16 个套件 **605 项断言 0 失败**；`data/act/*.json` 事件字段与顺序不变；
+动作事件与纯软件路径逐条一致；重复请求 `scanned=0`；不同目录同名文件夹缓存键不同。
