@@ -355,9 +355,12 @@ def _end_candidates(proj: dict, beats: list[dict], base: float,
         if open_score >= 3.0:
             hook_bonus += 0.6
         score = open_score + hook_bonus + bonus + fit + more + content
+        hook_ok = bool(open_score >= 1.5
+                       and abs(elapsed - body_budget) <= max(12.0, body_budget * 0.12))
         raw.append({
             "g0": round(tail[0]["g0"], 3), "g1": round(g1, 3), "ep": b["ep"],
             "score": round(score, 2), "open": round(open_score, 2),
+            "hook_ok": hook_ok,
             "susp": round(susp, 2),
             "signals": signals, "hook_type": hook_type, "closed": bool(closed),
             "hits": shits[:4],
@@ -572,17 +575,24 @@ def _decide_end(proj: dict, beats: list[dict], base: float, t0: float,
 
     if not cands:
         return t0, "按目标时长收尾", [], False
+    # 两层选择：目标 ±12% 内如果有真悬念（open≥1.5），优先它；
+    # 没有才按总分选最贴合的自然剧情点，避免为了卡准时长落回普通收束。
+    hooks = [c for c in cands if c.get("hook_ok")]
+    first = (max(hooks, key=lambda c: (float(c.get("open") or 0.0),
+                                       float(c.get("score") or 0.0)))
+             if hooks else cands[0])
     if pick_idx > 0 and len(cands) > 1:
         # 轮换到第 pick_idx 优的"替代结尾"，但替代者也得贴着目标时长——
         # 否则第 4 条会轮到一个 190s 的结尾，目标 150s 直接超 27%
+        rest = [c for c in cands if c is not first]
         dev_cap = max(12.0, body_budget * 0.12)
-        alts = [c for c in cands[1:] if abs(c["elapsed"] - body_budget) <= dev_cap]
+        alts = [c for c in rest if abs(c["elapsed"] - body_budget) <= dev_cap]
         if not alts:
             # 一个贴合的替代都没有：挑偏差最小的两个替代，别硬上离谱的
-            alts = sorted(cands[1:], key=lambda c: abs(c["elapsed"] - body_budget))[:2]
+            alts = sorted(rest, key=lambda c: abs(c["elapsed"] - body_budget))[:2]
         pick = alts[(pick_idx - 1) % len(alts)]
     else:
-        pick = cands[0]     # 标准方案永远用最优候选，可预期、可复现
+        pick = first        # 标准方案：有真悬念优先悬念，否则最优自然点
     return pick["g1"], pick["reason"], cands, False
 
 

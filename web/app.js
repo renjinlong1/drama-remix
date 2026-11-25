@@ -1,7 +1,7 @@
 'use strict';
 
 /* 脚本构建标记：排查「按钮在、点了没反应」时先确认浏览器加载的是不是这一版 */
-window.__APP_BUILD__ = '2026-11-25.1';
+window.__APP_BUILD__ = '2026-11-25.2';
 
 /* 半新半旧的页面（新 app.js 配旧缓存 HTML，或反过来）会缺元素。
    以前第一处 $('#缺的').onclick = … 就抛 TypeError，整段脚本当场中断，
@@ -1739,6 +1739,14 @@ function selectHook(h, silent) {
 // 全剧最后 10% 的悬念段落跟这段剧情没关系，点了也接不上。
 function endKey(h) { return 'e' + h.ep + '@' + Number(h.g1).toFixed(2); }
 
+/* 自动模式也要把"实际选中的悬念卡点"标出来：
+   候选列表按分数排序，真正的结尾可能不是第一张（可能早了/晚了几秒），
+   不标的话会出现"方案停在第 5 集，候选区却没有一张是选中的"。 */
+function autoEndG() {
+  return (S.endMode === 'auto' && S.plan && S.plan.end)
+    ? Number(S.plan.end.g1) : null;
+}
+
 function endRaw() {
   const c = (S.plan && S.plan.end_cands) || [];
   return c.length ? c.map((x) => ({
@@ -1768,9 +1776,12 @@ function renderEnds() {
   const list = endList();
   if (!list.length) { box.innerHTML = '<div class="empty">导入剧集后自动生成</div>'; return; }
   const forced = S.endMode === 'point';
+  const autoG = autoEndG();
   box.innerHTML = list.map((h, i) => {
     const mv = Number(h.shift || 0);
-    const on = forced && S.endhook && Math.abs(S.endhook.g1 - h.g1) < 0.25;
+    const on = autoG != null
+      ? Math.abs(autoG - h.g1) < 0.25
+      : (forced && !!S.endhook && Math.abs(S.endhook.g1 - h.g1) < 0.25);
     return '<div class="hook end' + (on ? ' on' : '') + (Math.abs(mv) > 0.01 ? ' mvd' : '') +
       '" data-i="' + i + '">' +
       '<div class="hmv">' +
@@ -1780,7 +1791,7 @@ function renderEnds() {
         (h.g1 - epOffset(h.ep) - 1.0).toFixed(2) + '" alt="">' +
       '<div class="htop"><span>第 ' + h.ep + ' 集</span><span>·</span><span>' +
         fmt1(h.g1 - epOffset(h.ep)) + '</span>' +
-        '<span class="hsc">' + (h.score || 0).toFixed(0) + '</span>' +
+        '<span class="hsc">' + Math.max(0, Number(h.score) || 0).toFixed(0) + '</span>' +
         (h.note ? '<span class="hnote">' + esc(h.note) + '</span>' : '') + '</div>' +
       '<div class="htxt">' + esc((h.text || '').slice(-56)) + '</div>' +
       '<div class="hmeta"><span' + (Math.abs(mv) > 0.01 ? ' class="mvx"' : '') + '>' +
@@ -2093,9 +2104,12 @@ function drawMarks() {
 
   // 上排：结尾候选（紫）
   const ends = endList();
+  const autoG = autoEndG();
   ends.forEach((e2) => {
     const x = mxOf(e2.g1);
-    const on = S.endhook && S.endMode === 'point' && Math.abs(S.endhook.g1 - e2.g1) < 0.25;
+    const on = autoG != null
+      ? Math.abs(autoG - e2.g1) < 0.25
+      : (S.endhook && S.endMode === 'point' && Math.abs(S.endhook.g1 - e2.g1) < 0.25);
     mkx.fillStyle = on ? '#c9a4ff' : 'rgba(180,122,255,.72)';
     mkx.fillRect(x - 1.5, 5, 3, 8);
     if (on) { mkx.strokeStyle = '#e6d6ff'; mkx.strokeRect(x - 2.5, 4, 5, 10); }
