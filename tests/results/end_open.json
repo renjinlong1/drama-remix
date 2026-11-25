@@ -1,0 +1,142 @@
+{
+  "when": "2026-11-25 15:34:06",
+  "total": 27,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "停在问题句而不是后面的收束句",
+      "ok": true,
+      "detail": "53.5"
+    },
+    {
+      "name": "结尾被标为未答问题",
+      "ok": true,
+      "detail": "['悬念词', '未答问题', '下一句才收束']"
+    },
+    {
+      "name": "悬念分大于 0",
+      "ok": true,
+      "detail": "6.97"
+    },
+    {
+      "name": "不标记为收束结尾",
+      "ok": true,
+      "detail": "False"
+    },
+    {
+      "name": "结果理由写明留悬念",
+      "ok": true,
+      "detail": "停在第 1 集「难道」· 留悬念"
+    },
+    {
+      "name": "结尾不是剧终",
+      "ok": true,
+      "detail": "53.5"
+    },
+    {
+      "name": "停在揭晓前",
+      "ok": true,
+      "detail": "53.5"
+    },
+    {
+      "name": "识别出身份将揭",
+      "ok": true,
+      "detail": "['悬念词', '身份将揭']"
+    },
+    {
+      "name": "理由写明留悬念",
+      "ok": true,
+      "detail": "停在第 1 集「是谁」· 留悬念"
+    },
+    {
+      "name": "没有停在第 1 集收束句上",
+      "ok": true,
+      "detail": "(1, 53.5)"
+    },
+    {
+      "name": "停在收束之前或第 2 集悬念点",
+      "ok": true,
+      "detail": "(1, 53.5)"
+    },
+    {
+      "name": "有明确的留扣信号",
+      "ok": true,
+      "detail": "['下一句才收束']"
+    },
+    {
+      "name": "不标记为收束结尾",
+      "ok": true,
+      "detail": "False"
+    },
+    {
+      "name": "指定点精确落位",
+      "ok": true,
+      "detail": "55.5"
+    },
+    {
+      "name": "标记为指定结尾",
+      "ok": true,
+      "detail": "('forced', True)"
+    },
+    {
+      "name": "理由写明按指定结尾",
+      "ok": true,
+      "detail": "按指定的结尾钩子收尾"
+    },
+    {
+      "name": "收束句被标记",
+      "ok": true,
+      "detail": "True"
+    },
+    {
+      "name": "不伪造悬念分",
+      "ok": true,
+      "detail": "-5.5"
+    },
+    {
+      "name": "理由不声称留悬念",
+      "ok": true,
+      "detail": "停在第 1 集自然剧情点"
+    },
+    {
+      "name": "理由说明自然剧情点",
+      "ok": true,
+      "detail": "停在第 1 集自然剧情点"
+    },
+    {
+      "name": "两次结尾一致",
+      "ok": true,
+      "detail": "(53.5, 53.5)"
+    },
+    {
+      "name": "两次理由一致",
+      "ok": true,
+      "detail": "('停在第 1 集「到底、是谁」· 留悬念', '停在第 1 集「到底、是谁」· 留悬念')"
+    },
+    {
+      "name": "最后一段仍是正片",
+      "ok": true,
+      "detail": "end_hook"
+    },
+    {
+      "name": "结尾时间与最后一段一致",
+      "ok": true,
+      "detail": "(53.5, 53.5)"
+    },
+    {
+      "name": "方案里没有引导尾帧段",
+      "ok": true,
+      "detail": "['end_hook']"
+    },
+    {
+      "name": "没有为收束新增额外分段",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "结尾理由只描述正片卡点",
+      "ok": true,
+      "detail": "停在第 1 集「难道」· 留悬念"
+    }
+  ]
+}
