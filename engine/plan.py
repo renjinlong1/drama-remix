@@ -349,7 +349,12 @@ def _end_candidates(proj: dict, beats: list[dict], base: float,
             fit -= (dev - 0.12) * body_budget / 2.0
         more = 2.5 if g1 < total - 3.0 else -6.0
         content = sum(x["score"] for x in tail) * 0.20
-        score = open_score + bonus + fit + more + content
+        # 有效悬念优先：宁可早/晚几秒，也停在一个真留扣的地方，而不是
+        # 为了卡准目标时长落回普通剧情点。弱信号（<1.5）不算，避免硬造。
+        hook_bonus = 1.2 if open_score >= 1.5 else 0.0
+        if open_score >= 3.0:
+            hook_bonus += 0.6
+        score = open_score + hook_bonus + bonus + fit + more + content
         raw.append({
             "g0": round(tail[0]["g0"], 3), "g1": round(g1, 3), "ep": b["ep"],
             "score": round(score, 2), "open": round(open_score, 2),
