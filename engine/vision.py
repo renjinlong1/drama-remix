@@ -648,31 +648,51 @@ def _write_cache(path: Path, proj: dict, key: str, eps: dict) -> None:
                "name": proj.get("name") or "", "folder": proj.get("folder") or "",
                "eps": eps, "saved_at": int(time.time())}
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    for attempt in range(3):
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        for attempt in range(3):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.05)
+    finally:
+        # 替换失败时别把 .tmp 留在 data/act 里：下次 drop_cache 只认 *.json，
+        # 这些半截文件会一直堆着没人清。
         try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if attempt == 2:
-                raise
-            time.sleep(0.05)
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _cached_events(proj: dict, eps: dict) -> list[dict]:
-    """把按集缓存拼回全剧时间轴；只回放确认有效的集。"""
+    """把按集缓存拼回全剧时间轴；只回放确认有效的集。
+
+    单条事件结构不对（缺 t0/t1、被手改过、磁盘写坏）时跳过这一条，而不是
+    抛 KeyError：以前一条坏数据会让 /api/state 直接 500，整部剧都打不开。
+    """
     out: list[dict] = []
     for e in proj.get("episodes") or []:
         r = eps.get(str(e.get("idx")))
         if _ep_stale(e, r):
             continue
+        offset = float(e.get("offset") or 0.0)
         for ev in (r or {}).get("events") or []:
+            try:
+                t0 = float(ev["t0"])
+                t1 = float(ev["t1"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if t1 < t0:
+                continue
             out.append({
                 "ep": e["idx"],
-                "g0": round(e["offset"] + ev["t0"], 3),
-                "g1": round(e["offset"] + ev["t1"], 3),
-                "v": ev.get("v", 0.0), "a": ev.get("a", 0.0),
-                "score": ev.get("score", 0.0),
+                "g0": round(offset + t0, 3),
+                "g1": round(offset + t1, 3),
+                "v": float(ev.get("v") or 0.0), "a": float(ev.get("a") or 0.0),
+                "score": float(ev.get("score") or 0.0),
             })
     return out
 
@@ -715,37 +735,34 @@ def drop_cache(proj: dict, root: Path) -> list[str]:
     return removed
 
 
+def _cpu_count() -> int:
+    try:
+        return os.cpu_count() or 4
+    except Exception:       # noqa: BLE001 极端环境下 cpu_count 也可能抛
+        return 4
+
+
+def _env_want(name: str, default: int) -> int:
+    """读并发环境变量：没设用默认；设了但写错（"abc"）按 0 处理，由调用方兜到 1 路。"""
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
 def _scan_workers(n_todo: int) -> int:
     """整剧动作扫描并发：默认 8 路上限，按 CPU 核数折半，可用 DC_ACT_WORKERS 覆盖。"""
-    try:
-        cpu = os.cpu_count() or 4
-    except Exception:       # noqa: BLE001
-        cpu = 4
-    env = os.environ.get("DC_ACT_WORKERS")
-    if env:
-        try:
-            want = int(env)
-        except ValueError:
-            want = 0
-    else:
-        want = max(2, min(VISION_WORKERS, cpu // 2))
+    want = _env_want("DC_ACT_WORKERS", max(2, min(VISION_WORKERS, _cpu_count() // 2)))
     return max(1, min(VISION_WORKERS, want or 1, max(1, n_todo)))
 
 
 def _scan_threads(workers: int) -> int:
     """每路 ffmpeg 线程数：8 路并发时每路 2 线程，避免把核心全占满反而更慢。"""
-    try:
-        cpu = os.cpu_count() or 4
-    except Exception:       # noqa: BLE001
-        cpu = 4
-    env = os.environ.get("DC_ACT_THREADS")
-    if env:
-        try:
-            want = int(env)
-        except ValueError:
-            want = 0
-    else:
-        want = max(1, min(2, cpu // max(1, workers)))
+    want = _env_want("DC_ACT_THREADS",
+                     max(1, min(2, _cpu_count() // max(1, workers))))
     return max(1, min(8, want or 1))
 
 
@@ -761,6 +778,20 @@ def scan_project(proj: dict, root: Path, progress=None, force: bool = False,
     path = cache_path(key, root)
     episodes = proj.get("episodes") or []
     lock = _key_lock(key)
+
+    def _result(**kw) -> dict:
+        """统一的结果结构：默认是「中止」形态，成功路径显式覆盖对应字段。
+
+        以前三个 return 各写一遍 14 个字段，加字段时很容易漏掉某一支；
+        这里收成一份，字段只会少写不会写错。
+        """
+        base = {"events": [], "eps": 0, "scanned": 0, "total": len(episodes),
+                "failed": [], "pending": 0, "cache_key": key,
+                "cache_file": str(path), "cache_hit": 0,
+                "cache_written": False, "aborted": True, "cache_error": "",
+                "batch_hw": False, "batch_reason": ""}
+        base.update(kw)
+        return base
 
     with lock:
         eps, info = _load_cache(proj, root)
@@ -836,13 +867,9 @@ def scan_project(proj: dict, root: Path, progress=None, force: bool = False,
                 drop_cache(proj, root)
             except Exception:       # noqa: BLE001
                 pass
-            return {"events": [], "eps": 0, "scanned": 0,
-                    "total": len(episodes), "failed": [], "pending": 0,
-                    "cache_key": key, "cache_file": str(path),
-                    "cache_hit": cache_hit, "cache_written": False,
-                    "aborted": True, "cache_error": cache_error,
-                    "batch_hw": bool(batch.get("hardware")),
-                    "batch_reason": batch.get("reason", "")}
+            return _result(cache_hit=cache_hit, cache_error=cache_error,
+                           batch_hw=bool(batch.get("hardware")),
+                           batch_reason=batch.get("reason", ""))
 
         # 0 集可扫时也要写：可能只是刚把老「按剧名」缓存迁移到新键
         if todo or info.get("migrated_from"):
@@ -861,21 +888,17 @@ def scan_project(proj: dict, root: Path, progress=None, force: bool = False,
                     drop_cache(proj, root)
                 except Exception:   # noqa: BLE001
                     pass
-                return {"events": [], "eps": 0, "scanned": 0,
-                        "total": len(episodes), "failed": [], "pending": 0,
-                        "cache_key": key, "cache_file": str(path),
-                        "cache_hit": cache_hit, "cache_written": False,
-                        "aborted": True, "cache_error": cache_error,
-                        "batch_hw": bool(batch.get("hardware")),
-                        "batch_reason": batch.get("reason", "")}
+                return _result(cache_hit=cache_hit, cache_error=cache_error,
+                               batch_hw=bool(batch.get("hardware")),
+                               batch_reason=batch.get("reason", ""))
 
     events = _cached_events(proj, eps)
     pending_after = sum(1 for e in episodes if _ep_stale(e, eps.get(str(e.get("idx")))))
-    return {"events": events, "eps": sum(1 for e in episodes
-                                         if str(e.get("idx")) in eps),
-            "scanned": done, "total": len(episodes), "failed": failed,
-            "pending": pending_after, "cache_key": key, "cache_file": str(path),
-            "cache_hit": cache_hit, "cache_written": bool(todo or info.get("migrated_from")),
-            "aborted": False, "cache_error": cache_error,
-            "batch_hw": bool(batch.get("hardware")),
-            "batch_reason": batch.get("reason", "")}
+    return _result(events=events,
+                   eps=sum(1 for e in episodes if str(e.get("idx")) in eps),
+                   scanned=done, failed=failed, pending=pending_after,
+                   cache_hit=cache_hit,
+                   cache_written=bool(todo or info.get("migrated_from")),
+                   aborted=False, cache_error=cache_error,
+                   batch_hw=bool(batch.get("hardware")),
+                   batch_reason=batch.get("reason", ""))

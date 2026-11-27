@@ -1379,8 +1379,15 @@ def analyze(proj: dict, seed: int | None = None,
     # 补位顺序，回来的一批和用户刚看到的对不上。
     cur_items = proj.get("hook_current_items") or []
     hl = None
-    if cur_items and all(1 <= int(c.get("ep", 0)) <= len(proj["episodes"])
-                         and float(c.get("g1", 0)) <= total + 1.0 for c in cur_items):
+    try:
+        # 存档里的这一批可能被手改 / 写坏（ep 是字符串、g1 是空值）：
+        # 校验本身不能抛异常，否则整部剧打不开，直接当作没有存档批次、重新算一批。
+        reusable = bool(cur_items) and all(
+            1 <= int(c.get("ep", 0)) <= len(proj["episodes"])
+            and float(c.get("g1", 0)) <= total + 1.0 for c in cur_items)
+    except (TypeError, ValueError, AttributeError):
+        reusable = False
+    if reusable:
         hl = [dict(c) for c in cur_items]
         for i, h in enumerate(hl):
             h["id"] = i

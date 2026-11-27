@@ -206,6 +206,13 @@ def loc(proj: dict, gtime: float) -> tuple[int, float]:
 
 
 def save(proj: dict) -> str:
+    """把项目写成 projects/<剧名>.json。
+
+    写入必须原子：直接 `write_text` 时，进程被杀 / 断电 / 磁盘写满都会留下
+    半截 JSON，而 `recent()` 读到坏 JSON 会直接跳过——用户看到的就是
+    「这部剧凭空消失了」，原时间轴、动作点、钩子池全没了。
+    改成「临时文件 + os.replace」后，要么是旧文件，要么是新文件，不会半截。
+    """
     PROJ.mkdir(exist_ok=True)
     path = PROJ / f"{_safe_name(proj['name'])}.json"
     # 同名项目换了另一部剧：先把旧存档另存一份 .bak，万一判断错了还能捞回来
@@ -216,8 +223,24 @@ def save(proj: dict) -> str:
                 (PROJ / (path.stem + ".json.bak")).write_bytes(path.read_bytes())
         except Exception:  # noqa: BLE001
             pass
-    slim = {**proj}
-    path.write_text(json.dumps(slim, ensure_ascii=False), encoding="utf-8")
+    text = json.dumps({**proj}, ensure_ascii=False)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        for attempt in range(3):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                # Windows 上杀毒 / 索引服务可能短暂占着目标文件
+                if attempt == 2:
+                    raise
+                time.sleep(0.05)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)     # 异常路径别把 .tmp 留在 projects 里
+        except OSError:
+            pass
     return str(path)
 
 

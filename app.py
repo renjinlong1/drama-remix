@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import itertools
+import math
 import os
 import re
 import random
@@ -81,11 +83,19 @@ MEDIA_TYPES = {
 
 
 def _clean_stale_work():
-    """清掉上次异常退出留下的渲染中间目录（_r*），1 小时内的不动，可能在用。"""
+    """清掉上次异常退出留下的渲染中间目录（_r*）与半截 .tmp，1 小时内的不动，可能在用。"""
     for d in (ROOT / "projects").glob("_r*"):
         try:
             if d.is_dir() and time.time() - d.stat().st_mtime > 3600:
                 shutil.rmtree(d, ignore_errors=True)
+        except BaseException:  # noqa: BLE001
+            pass
+    # 原子写用的是「.剧名.json.<pid>.tmp」：进程在 replace 之前被杀会留下它。
+    # 它们不匹配 recent() 的 *.json，不会被当成项目，但会一直堆在 projects 里。
+    for f in (ROOT / "projects").glob(".*.tmp"):
+        try:
+            if f.is_file() and time.time() - f.stat().st_mtime > 3600:
+                f.unlink(missing_ok=True)
         except BaseException:  # noqa: BLE001
             pass
 
@@ -783,7 +793,9 @@ def make_plan(body: dict = Body(...)):
         raise HTTPException(400, "还没有导入剧集")
     if not (a and a.get("beats")):
         raise HTTPException(400, NO_SUB_MSG)
-    target = float(body.get("target", 360))
+    target = _to_num(body.get("target", 360))
+    if target is None:
+        raise HTTPException(400, "目标时长请填 1-15 分钟")
     if target < 60 or target > 900:
         raise HTTPException(400, "目标时长请填 1-15 分钟")
     hook = body.get("hook")
@@ -793,7 +805,7 @@ def make_plan(body: dict = Body(...)):
         pl = planmod.build(p, a["beats"], target=target, hook=hook,
                            end_hook=end_hook,
                            end_mode=str(body.get("end_mode") or "auto"),
-                           tightness=float(body.get("tightness", 0.0)),
+                           tightness=_to_num(body.get("tightness"), 0.0),
                            end_ep=_to_int(body.get("end_ep")),
                            lead=_to_lead(body.get("hook_lead")),
                            tail_mode=tm, tail_fixed=tf)
@@ -819,13 +831,15 @@ def plan_ends(body: dict = Body(...)):
         raise HTTPException(400, "还没有导入剧集")
     if not (a and a.get("beats")):
         raise HTTPException(400, NO_SUB_MSG)
-    target = float(body.get("target", 360))
+    target = _to_num(body.get("target", 360))
+    if target is None:
+        raise HTTPException(400, "目标时长请填 1-15 分钟")
     if target < 60 or target > 900:
         raise HTTPException(400, "目标时长请填 1-15 分钟")
     try:
         tm, tf = _to_tail(body)
         pl = planmod.build(p, a["beats"], target=target, hook=body.get("hook"),
-                           tightness=float(body.get("tightness", 0.0)),
+                           tightness=_to_num(body.get("tightness"), 0.0),
                            lead=_to_lead(body.get("hook_lead")),
                            tail_mode=tm, tail_fixed=tf)
     except RuntimeError as e:
@@ -839,6 +853,22 @@ def _to_int(v):
         return n if n > 0 else None
     except (TypeError, ValueError):
         return None
+
+
+def _to_num(v, default: float | None = None) -> float | None:
+    """把请求里的数字字段转成 float；空值 / 非数字 / NaN / inf 一律回落到默认值。
+
+    以前这些字段直接 `float(...)` / `int(...)`：前端传个空字符串、或者用户
+    在输入框里打了半个数字，接口就抛 ValueError 变成 500，日志里只剩一句
+    英文 traceback。统一在这里收口，非法输入按默认值处理，正常数字一字不差。
+    """
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(n):
+        return default
+    return n
 
 
 def _to_tail(body: dict) -> tuple[str, float]:
@@ -872,10 +902,12 @@ def plan_beats(body: dict = Body(...)):
         raise HTTPException(400, NO_SUB_MSG)
     drop = body.get("beats_drop") or []
     hook = body.get("hook") or (pl or {}).get("hook")
-    target = float(body.get("target") or (pl or {}).get("target") or 360)
+    target = _to_num(body.get("target"), None)
+    if target is None:
+        target = _to_num((pl or {}).get("target"), 360) or 360.0
     end_t = (pl or {}).get("to", {}).get("g1")
     if body.get("end_t"):
-        end_t = float(body["end_t"])
+        end_t = _to_num(body["end_t"], end_t)
     lead = _to_lead(body.get("hook_lead", (pl or {}).get("hook_lead", 0.0)))
     tm, tf = _to_tail({"tail_mode": body.get("tail_mode", (pl or {}).get("tail_mode")),
                        "tail_fixed": body.get("tail_fixed", 2.0)})
@@ -891,19 +923,23 @@ def plan_beats(body: dict = Body(...)):
 
 
 def _pack_opts(body: dict, title: str) -> dict:
-    """渲染/批量共用的包装与输出参数。"""
+    """渲染/批量共用的包装与输出参数。
+
+    数字字段统一走 `_to_num`：前端输入框清空 / 粘进非数字时按默认值处理，
+    不让 `int('')` 之类的 ValueError 变成本该是 400 的 500。
+    """
     return {
         "size": body.get("size", "match"),
         "fit": body.get("fit", "crop"),
-        "crf": int(body.get("crf", 20)),
+        "crf": int(_to_num(body.get("crf"), 20)),
         "title": title,
         "logo": body.get("logo", ""),
         "logo_pos": body.get("logo_pos", "tr"),
-        "logo_ratio": float(body.get("logo_ratio", 0.14)),
+        "logo_ratio": _to_num(body.get("logo_ratio"), 0.14),
         "overlay": body.get("overlay", ""),
-        "overlay_opacity": float(body.get("overlay_opacity", 1.0)),
+        "overlay_opacity": _to_num(body.get("overlay_opacity"), 1.0),
         "end_frame": body.get("end_frame", ""),
-        "end_frame_dur": float(body.get("end_frame_dur", 2.5)),
+        "end_frame_dur": _to_num(body.get("end_frame_dur"), 2.5),
         "template_on_endframe": bool(body.get("template_on_endframe", False)),
     }
 
@@ -1262,13 +1298,15 @@ def batch(body: dict = Body(...)):
     alloc = _alloc_items(items, total)
     if not alloc:
         raise HTTPException(400, "先在高光钩子候选里用 ×N 选出要批量产出的开头")
-    target = float(body.get("target", 360))
+    target = _to_num(body.get("target", 360))
+    if target is None:
+        raise HTTPException(400, "目标时长请填 1-15 分钟")
     if target < 60 or target > 900:
         raise HTTPException(400, "目标时长请填 1-15 分钟")
     end_hook = body.get("end_hook")
-    jitter = max(0.0, min(0.5, float(body.get("jitter", 0.12))))
+    jitter = min(0.5, max(0.0, _to_num(body.get("jitter"), 0.12)))
     end_mode = str(body.get("end_mode") or "auto")
-    tightness = float(body.get("tightness", 0.0))
+    tightness = _to_num(body.get("tightness"), 0.0)
     end_ep = _to_int(body.get("end_ep"))
     lead = _to_lead(body.get("hook_lead"))
     tm, tf = _to_tail(body)
@@ -1420,7 +1458,10 @@ def src_video(ep: int):
 
 
 THUMB_LIMIT = 2000
-_thumb_new = 0
+# 抽帧是 6 路并发生成，`_thumb_new += 1` 在多线程下会丢计数（+= 不是原子操作），
+# 结果就是「该清理的时候没触发」。用 itertools.count 的 next() 拿递增号，
+# GIL 下天然原子，不用再加锁。
+_thumb_new = itertools.count(1)
 
 
 def _prune_thumbs(limit: int = THUMB_LIMIT) -> None:
@@ -1459,7 +1500,6 @@ def _thumb_key(ep: dict, t: float) -> Path:
 
 def _ensure_thumb(ep: dict, t: float) -> Path:
     """取（必要时生成）一帧缩略图，返回文件路径。"""
-    global _thumb_new
     key = _thumb_key(ep, t)
     if key.exists():
         return key
@@ -1469,8 +1509,7 @@ def _ensure_thumb(ep: dict, t: float) -> Path:
             ffmpegx.run(["-y", "-threads", "1", "-ss", f"{tt:.2f}", "-i", ep["path"],
                          "-frames:v", "1", "-an", "-vf", "scale=180:-2", "-q:v", "5",
                          str(key)], timeout=60, check=False)
-            _thumb_new += 1
-            if _thumb_new % 50 == 0:
+            if next(_thumb_new) % 50 == 0:
                 _prune_thumbs()
     return key
 
@@ -1529,7 +1568,12 @@ def frame(ep: int, t: float = 1.0):
         p = STATE["project"]
     if not p:
         raise HTTPException(400, "还没有导入剧集")
-    e = projmod.ep_by_idx(p, ep)
+    try:
+        e = projmod.ep_by_idx(p, ep)
+    except KeyError:
+        # 与 /api/src 保持一致：集号越界是「找不到」，不是服务端故障。
+        # 以前这里让 KeyError 冒出去，前端拿到 500 会当成后端崩了。
+        raise HTTPException(404, f"没有第 {ep} 集") from None
     key = _ensure_thumb(e, t)
     if not key.exists():
         raise HTTPException(404, "取帧失败")

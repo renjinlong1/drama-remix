@@ -1,0 +1,242 @@
+{
+  "when": "2026-11-27 09:59:47",
+  "total": 47,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "第 99 集返回 404",
+      "ok": true,
+      "detail": "404"
+    },
+    {
+      "name": "第 0 集返回 404",
+      "ok": true,
+      "detail": "404"
+    },
+    {
+      "name": "第 -3 集返回 404",
+      "ok": true,
+      "detail": "404"
+    },
+    {
+      "name": "合法集号仍能取帧",
+      "ok": true,
+      "detail": "{'n': 1}"
+    },
+    {
+      "name": "坏事件不抛异常",
+      "ok": true,
+      "detail": "<class 'list'>"
+    },
+    {
+      "name": "只保留 2 条有效事件",
+      "ok": true,
+      "detail": "[(1, 1.0, 2.5), (2, 10.5, 11.5)]"
+    },
+    {
+      "name": "第 1 集事件换算正确",
+      "ok": true,
+      "detail": "{'ep': 1, 'g0': 1.0, 'g1': 2.5, 'v': 1.0, 'a': 0.0, 'score': 2.0}"
+    },
+    {
+      "name": "第 2 集带上 offset",
+      "ok": true,
+      "detail": "{'ep': 2, 'g0': 10.5, 'g1': 11.5, 'v': 0.0, 'a': 0.0, 'score': 0.0}"
+    },
+    {
+      "name": "缺省 v/a/score 补 0",
+      "ok": true,
+      "detail": "{'ep': 2, 'g0': 10.5, 'g1': 11.5, 'v': 0.0, 'a': 0.0, 'score': 0.0}"
+    },
+    {
+      "name": "存档写入成功",
+      "ok": true,
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_save_0dv23hmg\\守卫测试剧.json"
+    },
+    {
+      "name": "存档内容完整",
+      "ok": true,
+      "detail": "守卫测试剧"
+    },
+    {
+      "name": "没有残留 .tmp",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "换文件夹时生成 .bak",
+      "ok": true,
+      "detail": "['守卫测试剧.json', '守卫测试剧.json.bak']"
+    },
+    {
+      "name": "主存档换成新内容",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "recent 能读到这部剧",
+      "ok": true,
+      "detail": "['守卫测试剧']"
+    },
+    {
+      "name": "整数原样保留",
+      "ok": true,
+      "detail": "360.0"
+    },
+    {
+      "name": "浮点原样保留",
+      "ok": true,
+      "detail": "2.5"
+    },
+    {
+      "name": "空字符串回落默认",
+      "ok": true,
+      "detail": "20"
+    },
+    {
+      "name": "None 回落默认",
+      "ok": true,
+      "detail": "20"
+    },
+    {
+      "name": "乱码回落默认",
+      "ok": true,
+      "detail": "14"
+    },
+    {
+      "name": "inf 回落默认",
+      "ok": true,
+      "detail": "7"
+    },
+    {
+      "name": "nan 回落默认",
+      "ok": true,
+      "detail": "7"
+    },
+    {
+      "name": "crf 非法回落 20",
+      "ok": true,
+      "detail": "20"
+    },
+    {
+      "name": "logo_ratio 非法回落 0.14",
+      "ok": true,
+      "detail": "0.14"
+    },
+    {
+      "name": "opacity 非法回落 1.0",
+      "ok": true,
+      "detail": "1.0"
+    },
+    {
+      "name": "尾帧时长非法回落 2.5",
+      "ok": true,
+      "detail": "2.5"
+    },
+    {
+      "name": "合法值不被改写",
+      "ok": true,
+      "detail": "{'size': 'match', 'fit': 'crop', 'crf': 18, 'title': 't', 'logo': '', 'logo_pos': 'tr', 'logo_ratio': 0.2, 'overlay': '', 'overlay_opacity': 1.0, 'end_frame': '', 'end_frame_dur': 2.5, 'template_on_endframe': False}"
+    },
+    {
+      "name": "目标时长 {'target': 'abc'} → 400",
+      "ok": true,
+      "detail": "400"
+    },
+    {
+      "name": "目标时长 {'target': None} → 400",
+      "ok": true,
+      "detail": "400"
+    },
+    {
+      "name": "目标时长 {'target': '10分'} → 400",
+      "ok": true,
+      "detail": "400"
+    },
+    {
+      "name": "plan/ends 非法时长也走 400",
+      "ok": true,
+      "detail": "400"
+    },
+    {
+      "name": "合法目标时长仍能排出方案",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "单引号转义为 '\\''",
+      "ok": true,
+      "detail": "file 'E:/顺剪/XX'\\''s 工作台/_r1/s000.mp4'\n"
+    },
+    {
+      "name": "路径用正斜杠（无反斜杠分隔符）",
+      "ok": true,
+      "detail": "file 'E:/顺剪/XX'\\''s 工作台/_r1/s000.mp4'\n"
+    },
+    {
+      "name": "以 file 开头、换行结尾",
+      "ok": true,
+      "detail": "file 'E:/顺剪/XX'\\''s 工作台/_r1/s000.mp4'\n"
+    },
+    {
+      "name": "普通路径保持原样",
+      "ok": true,
+      "detail": "file 'E:/a/b.mp4'\n"
+    },
+    {
+      "name": "坏批次不阻断分析",
+      "ok": true,
+      "detail": "2"
+    },
+    {
+      "name": "能重新算出一批候选",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "缓存文件已写",
+      "ok": true,
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_cache_d_y2rp_f\\data\\act\\缓存剧~ffdf0e55.json"
+    },
+    {
+      "name": "没有残留 .tmp",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "缓存结构完整",
+      "ok": true,
+      "detail": "['1']"
+    },
+    {
+      "name": "非法并发数 → 1 路",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "0 并发 → 1 路",
+      "ok": true,
+      "detail": "1"
+    },
+    {
+      "name": "合法并发数生效",
+      "ok": true,
+      "detail": "5"
+    },
+    {
+      "name": "过期 .tmp 被清掉",
+      "ok": true,
+      "detail": ".旧剧.json.1234.tmp"
+    },
+    {
+      "name": "新 .tmp 保留（可能正在写）",
+      "ok": true,
+      "detail": ".新剧.json.5678.tmp"
+    },
+    {
+      "name": "正常项目不受影响",
+      "ok": true,
+      "detail": "正常剧.json"
+    }
+  ]
+}

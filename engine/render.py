@@ -189,6 +189,18 @@ def _cleanup_work(work: Path) -> None:
         pass
 
 
+def _concat_line(path: Path) -> str:
+    """concat 清单的一行。
+
+    路径里出现单引号（安装目录叫 `XX's 工作台`、成片名带撇号）时，
+    ffmpeg 的 concat 解析器会把 `file '...'` 提前截断，整条拼接报
+    "No such file"。按 ffmpeg 的规则写成 `'\\''` 才是安全的。
+    统一用正斜杠，避免反斜杠被当成转义符。
+    """
+    p = str(path).replace("\\", "/").replace("'", "'\\''")
+    return f"file '{p}'\n"
+
+
 def render(proj: dict, plan: dict, out_path: str, opts: dict | None = None,
            emit=None) -> dict:
     work = Path(proj_mod.PROJ) / ("_r" + str(os.getpid()))
@@ -260,7 +272,7 @@ def _render_impl(proj: dict, plan: dict, out_path: str, opts, emit, work: Path) 
 
     # ── 拼接 ──
     lst = work / "list.txt"
-    lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in pieces), encoding="utf-8")
+    lst.write_text("".join(_concat_line(p) for p in pieces), encoding="utf-8")
     joined = work / "joined.mp4"
     ffmpegx.run(["-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(joined)],
                 timeout=1800)
