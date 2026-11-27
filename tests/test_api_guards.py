@@ -264,12 +264,45 @@ def test_stale_tmp_cleanup():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_delete_archives():
+    """J：删项目前留可恢复副本，且归档目录不会污染最近项目列表。"""
+    tmpdir = Path(tempfile.mkdtemp(prefix="dc_del_"))
+    old_proj, old_root = projmod.PROJ, projmod.ROOT
+    projmod.PROJ, projmod.ROOT = tmpdir / "projects", tmpdir
+    (tmpdir / "projects").mkdir(parents=True)
+    try:
+        p = {"name": "归档测试剧", "folder": str(tmpdir), "total": 10.0,
+             "episodes": [_ep(1, 0.0, 10.0)], "sub_episodes": 0}
+        jf = Path(projmod.save(p))
+        projmod.forget("归档测试剧", str(tmpdir))
+        ck("原存档已删", not jf.exists(), jf.name)
+        arch = list((tmpdir / "projects" / projmod.DELETED_DIR).glob("*.json"))
+        ck("删除前留了归档副本", len(arch) == 1, [x.name for x in arch])
+        if arch:
+            d = json.loads(arch[0].read_text(encoding="utf-8"))
+            ck("归档内容完整", d.get("name") == "归档测试剧" and len(d["episodes"]) == 1, d.get("name"))
+        ck("归档目录不进最近项目", projmod.recent(8) == [], projmod.recent(8))
+
+        # 归档数量有上限，不会把 projects 当回收站
+        for i in range(projmod.DELETED_KEEP + 3):
+            projmod.save({**p, "name": f"归档测试剧{i}"})
+            projmod.forget(f"归档测试剧{i}", str(tmpdir))
+        arch = list((tmpdir / "projects" / projmod.DELETED_DIR).glob("*.json"))
+        ck(f"归档最多保留 {projmod.DELETED_KEEP} 份",
+           len(arch) == projmod.DELETED_KEEP, len(arch))
+    finally:
+        projmod.PROJ, projmod.ROOT = old_proj, old_root
+        projmod._RECENT_CACHE.update(key=None, items=[])
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def main() -> int:
     RESULTS.mkdir(parents=True, exist_ok=True)
     for fn in (test_frame_bad_ep, test_cached_events_tolerant, test_project_save_atomic,
                test_numeric_guard, test_concat_escape, test_analyze_bad_batch,
                test_write_cache_no_tmp, test_worker_env_fallback,
-               test_stale_tmp_cleanup):
+               test_stale_tmp_cleanup, test_delete_archives):
         try:
             fn()
         except Exception as e:  # noqa: BLE001

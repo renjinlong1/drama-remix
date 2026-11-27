@@ -1,6 +1,6 @@
 {
-  "when": "2026-11-27 09:59:47",
-  "total": 47,
+  "when": "2026-11-27 10:49:48",
+  "total": 52,
   "failed": 0,
   "checks": [
     {
@@ -51,7 +51,7 @@
     {
       "name": "存档写入成功",
       "ok": true,
-      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_save_0dv23hmg\\守卫测试剧.json"
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_save_s2lg244p\\守卫测试剧.json"
     },
     {
       "name": "存档内容完整",
@@ -196,7 +196,7 @@
     {
       "name": "缓存文件已写",
       "ok": true,
-      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_cache_d_y2rp_f\\data\\act\\缓存剧~ffdf0e55.json"
+      "detail": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\dc_cache_q8ch37q8\\data\\act\\缓存剧~f93e7b46.json"
     },
     {
       "name": "没有残留 .tmp",
@@ -237,6 +237,31 @@
       "name": "正常项目不受影响",
       "ok": true,
       "detail": "正常剧.json"
+    },
+    {
+      "name": "原存档已删",
+      "ok": true,
+      "detail": "归档测试剧.json"
+    },
+    {
+      "name": "删除前留了归档副本",
+      "ok": true,
+      "detail": "['归档测试剧_20261127-104947.json']"
+    },
+    {
+      "name": "归档内容完整",
+      "ok": true,
+      "detail": "归档测试剧"
+    },
+    {
+      "name": "归档目录不进最近项目",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "归档最多保留 20 份",
+      "ok": true,
+      "detail": "20"
     }
   ]
 }

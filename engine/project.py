@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -20,6 +21,34 @@ OCR_DIR = ROOT / "data" / "ocr"
 
 def _safe_name(name: str) -> str:
     return "".join(ch for ch in (name or "") if ch not in '\\/:*?"<>|').strip() or "project"
+
+
+DELETED_DIR = "_deleted"     # 删项目前留副本，放在 projects 子目录里（recent 只扫 *.json）
+DELETED_KEEP = 20            # 只留最近 20 份，别把磁盘当回收站
+
+
+def _archive(path: Path) -> None:
+    """把即将删除的项目存档复制一份到 projects/_deleted/。
+
+    复制而不是移动：调用方仍然按原路径 unlink，行为不变。归档失败一律忽略
+    （磁盘满 / 权限问题不能反过来让删除失败）。
+    """
+    try:
+        if not path.is_file():
+            return
+        d = PROJ / DELETED_DIR
+        d.mkdir(parents=True, exist_ok=True)
+        dst = d / f"{path.stem}_{time.strftime('%Y%m%d-%H%M%S')}.json"
+        n = 1
+        while dst.exists():          # 同一秒删两个同名项目
+            n += 1
+            dst = d / f"{path.stem}_{time.strftime('%Y%m%d-%H%M%S')}_{n}.json"
+        shutil.copyfile(path, dst)
+        olds = sorted(d.glob("*.json"), key=lambda x: x.stat().st_mtime)
+        for f in olds[:-DELETED_KEEP]:
+            f.unlink(missing_ok=True)
+    except Exception:       # noqa: BLE001 归档只是兜底，不能影响正常删除
+        pass
 
 
 def _cached_ocr_srt(name: str, idx: int) -> Path | None:
@@ -320,6 +349,9 @@ def forget(name: str, folder: str = "") -> list[str]:
     folder 精确删除；调用方没传 folder 时自己从项目存档里读一次。
     data/ocr 的字幕缓存按界面承诺保留（按文件夹名索引、带自校验），
     原片与成片也一律不动。
+
+    真正 unlink 之前会把项目 JSON 复制到 projects/_deleted/：删档是不可逆的
+    （半截时间轴、钩子池全都在这一个文件里），留一份副本，误删还能捞回来。
     """
     safe = _safe_name(name)
     removed: list[str] = []
@@ -330,6 +362,7 @@ def forget(name: str, folder: str = "") -> list[str]:
                 folder = str(json.loads(jf.read_text(encoding="utf-8")).get("folder") or "")
         except Exception:  # noqa: BLE001 存档坏了也继续清能清的
             folder = ""
+    _archive(PROJ / f"{safe}.json")
     for p in (PROJ / f"{safe}.json", PROJ / f"{safe}.json.bak",
               ROOT / "data" / "multimodal" / f"{safe}.json"):
         try:
